@@ -88,8 +88,11 @@ struct LockView: View {
 
                         Button("用備份密碼開啟") { submitRestore() }
                             .buttonStyle(CapsuleButtonStyle())
-                            .disabled(passphrase.isEmpty || isBusy)
-                            .opacity(passphrase.isEmpty || isBusy ? 0.45 : 1)
+                            // Only an empty field stops a submission: someone
+                            // retrying a passphrase must never be made to wait
+                            // on anything else.
+                            .disabled(passphrase.isEmpty)
+                            .opacity(passphrase.isEmpty ? 0.45 : 1)
                     }
                 }
                 .padding(.top, 22)

@@ -236,6 +236,10 @@ final class VaultStore: ObservableObject {
 
     func unlock() {
         guard phase == .locked else { return }
+        // A vault with no wrap for this machine can only be opened by typing
+        // its passphrase, so do not raise a system prompt that must fail and
+        // do not sit in .unlocking while the reader is trying to type.
+        guard !needsAdoption else { return }
         guard EnclaveKey.isSupported else {
             message = VaultError.biometryUnavailable.errorDescription
             return
@@ -558,8 +562,6 @@ final class VaultStore: ObservableObject {
 
     /// Takes a vault copied from another Mac and re-wraps its key for this one.
     func adopt(withPassphrase passphrase: String) {
-        guard phase != .unlocking else { return }
-        phase = .unlocking
         message = nil
         Task.detached(priority: .userInitiated) {
             do {
@@ -595,6 +597,9 @@ final class VaultStore: ObservableObject {
                     }
                 }
             } catch {
+                // Drop any cached enclave key so a retry starts clean rather
+                // than reusing whatever the failed attempt left behind.
+                DeviceKey.forget()
                 await MainActor.run { self.failUnlock(error) }
             }
         }
