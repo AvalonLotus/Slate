@@ -531,16 +531,13 @@ enum VaultKeyStore {
         Paths.restrictToOwner(url)
     }
 
-    /// Six groups of four from an alphabet without look-alike characters, so
-    /// the code survives being read off one screen and typed into another.
+    /// Eight digits, typed once on the receiving machine. The file it opens
+    /// is deleted the moment that machine binds itself, so the code never
+    /// stands guard over anything for long.
     static func transferCode() -> String {
-        let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-        var bytes = [UInt8](repeating: 0, count: 24)
+        var bytes = [UInt8](repeating: 0, count: 8)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        let characters = bytes.map { alphabet[Int($0) % alphabet.count] }
-        return stride(from: 0, to: characters.count, by: 4)
-            .map { String(characters[$0..<min($0 + 4, characters.count)]) }
-            .joined(separator: "-")
+        return bytes.map { String(Int($0) % 10) }.joined()
     }
 
     static func randomSalt() -> Data {

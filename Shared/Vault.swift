@@ -291,6 +291,9 @@ final class VaultStore: ObservableObject {
         VaultCatalogue.select(id)
         currentVaultID = id
         refreshPassphraseScope()
+        // A vault this machine has never been bound to is opened by its code,
+        // not by the enclave, so do not start an unlock that can only fail.
+        guard !needsAdoption else { return }
         unlock()
     }
 
@@ -560,6 +563,9 @@ final class VaultStore: ObservableObject {
 
     /// Takes a vault copied from another Mac and re-wraps its key for this one.
     func adopt(withPassphrase passphrase: String) {
+        guard phase != .unlocking else { return }
+        phase = .unlocking
+        message = nil
         Task.detached(priority: .userInitiated) {
             do {
                 guard var envelope = VaultKeyStore.load() else { throw VaultError.enclaveMissing }
