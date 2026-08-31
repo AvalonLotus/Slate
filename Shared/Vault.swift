@@ -164,6 +164,9 @@ final class VaultStore: ObservableObject {
     @Published private(set) var vaults: [VaultDescriptor] = VaultCatalogue.all
     @Published private(set) var currentVaultID: String = Paths.currentVaultID
     @Published var message: String?
+    /// Set when an unlock got as far as the enclave and no device wrap opened.
+    /// Cleared whenever the vault opens or the selection changes.
+    @Published private(set) var deviceRejected = false
     @Published var search: String = ""
 
     private var key: SymmetricKey?
@@ -210,14 +213,16 @@ final class VaultStore: ObservableObject {
         VaultKeyStore.load()?.codeWrap != nil
     }
 
-    /// A freshly imported vault holds no device wrap at all, so the passphrase
-    /// is the only way in. Deliberately not matched against this machine's id:
-    /// the id is a label that can change, and openOrCreate tries every device
-    /// wrap anyway, so matching on it would refuse a vault that opens fine.
+    /// Whether the passphrase is the only way into the current vault. Two
+    /// cases: it carries no device wrap at all, or it carries one this
+    /// machine's enclave has actually been unable to open. The second is only
+    /// knowable by trying, which is why it is recorded rather than guessed —
+    /// a wrap made on another Mac looks identical from the outside.
     var needsAdoption: Bool {
         guard let envelope = VaultKeyStore.load() else { return false }
-        let hasDeviceWrap = envelope.wraps.contains { $0.type == .device }
-        return envelope.codeWrap != nil && !hasDeviceWrap
+        guard envelope.codeWrap != nil else { return false }
+        if deviceRejected { return true }
+        return !envelope.wraps.contains { $0.type == .device }
     }
 
     var visibleItems: [KeyItem] { items.filter { !$0.isDeleted } }
@@ -280,6 +285,7 @@ final class VaultStore: ObservableObject {
         self.items = items
         self.events = events
         refreshPassphraseScope()
+        deviceRejected = false
         discardImportSource()
         withAnimation(Motion.snappy) { phase = .unlocked }
     }
@@ -287,6 +293,7 @@ final class VaultStore: ObservableObject {
     private func failUnlock(_ error: Error) {
         key = nil
         items = []
+        if case VaultError.deviceNotEnrolled = error { deviceRejected = true }
         message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         withAnimation(Motion.snappy) { phase = .locked }
     }
@@ -298,6 +305,8 @@ final class VaultStore: ObservableObject {
         lock()
         VaultCatalogue.select(id)
         currentVaultID = id
+        deviceRejected = false
+        message = nil
         refreshPassphraseScope()
         // A vault this machine has never been bound to is opened by its code,
         // not by the enclave, so do not start an unlock that can only fail.
