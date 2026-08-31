@@ -210,12 +210,14 @@ final class VaultStore: ObservableObject {
         VaultKeyStore.load()?.codeWrap != nil
     }
 
-    /// An imported vault carries no wrap for this machine, so the backup
-    /// passphrase is the only way in and should be what the lock screen asks
-    /// for — not a grey link under everything else.
+    /// A freshly imported vault holds no device wrap at all, so the passphrase
+    /// is the only way in. Deliberately not matched against this machine's id:
+    /// the id is a label that can change, and openOrCreate tries every device
+    /// wrap anyway, so matching on it would refuse a vault that opens fine.
     var needsAdoption: Bool {
         guard let envelope = VaultKeyStore.load() else { return false }
-        return envelope.codeWrap != nil && envelope.deviceWrap(id: DeviceIdentity.id) == nil
+        let hasDeviceWrap = envelope.wraps.contains { $0.type == .device }
+        return envelope.codeWrap != nil && !hasDeviceWrap
     }
 
     var visibleItems: [KeyItem] { items.filter { !$0.isDeleted } }
