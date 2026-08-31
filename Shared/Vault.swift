@@ -148,6 +148,11 @@ final class VaultStore: ObservableObject {
         case locked
         case unlocking
         case unlocked
+        /// 身分驗證過了，但選中的保險庫沒有這台機器的鑰匙。
+        ///
+        /// 這是保險庫層的問題，不是身分層的：人已經證明過自己是誰，不該被擋在
+        /// App 外面。停在這個狀態才有地方讓他換一個保險庫或匯入新檔案。
+        case unavailable
     }
 
     @Published private(set) var phase: Phase = .locked
@@ -166,7 +171,6 @@ final class VaultStore: ObservableObject {
     @Published var message: String?
     /// Set when an unlock got as far as the enclave and no device wrap opened.
     /// Cleared whenever the vault opens or the selection changes.
-    @Published private(set) var deviceRejected = false
     @Published var search: String = ""
 
     private var key: SymmetricKey?
@@ -207,24 +211,6 @@ final class VaultStore: ObservableObject {
 
     var isFirstRun: Bool { !EnclaveKey.exists }
 
-    /// True when a passphrase wrap exists, meaning the vault can be opened
-    /// without this Mac's enclave.
-    var restoreAvailable: Bool {
-        VaultKeyStore.load()?.codeWrap != nil
-    }
-
-    /// Whether the passphrase is the only way into the current vault. Two
-    /// cases: it carries no device wrap at all, or it carries one this
-    /// machine's enclave has actually been unable to open. The second is only
-    /// knowable by trying, which is why it is recorded rather than guessed —
-    /// a wrap made on another Mac looks identical from the outside.
-    var needsAdoption: Bool {
-        guard let envelope = VaultKeyStore.load() else { return false }
-        guard envelope.codeWrap != nil else { return false }
-        if deviceRejected { return true }
-        return !envelope.wraps.contains { $0.type == .device }
-    }
-
     var visibleItems: [KeyItem] { items.filter { !$0.isDeleted } }
 
     var filtered: [KeyItem] {
@@ -241,16 +227,13 @@ final class VaultStore: ObservableObject {
         }
     }
 
+    /// 解鎖 App。
+    ///
+    /// 這裡只做一件事：確認操作的人是誰。選中的保險庫這台打不打得開是另一回事，
+    /// 由 `.unavailable` 承接——把兩者綁在一起的話，一個從別台匯入的保險庫會把
+    /// 整個 App 鎖在門外，連換一個保險庫的地方都進不去。
     func unlock() {
         guard phase == .locked else { return }
-        // A vault with no wrap for this machine can only be opened by typing
-        // its passphrase, so do not raise a system prompt that must fail and
-        // do not sit in .unlocking while the reader is trying to type. Say so
-        // rather than returning in silence, which reads as a dead button.
-        guard !needsAdoption else {
-            message = "這個保險庫還沒綁到這台 Mac，請用它的備份密碼開啟，或改匯入其他檔案"
-            return
-        }
         guard EnclaveKey.isSupported else {
             message = VaultError.biometryUnavailable.errorDescription
             return
@@ -285,7 +268,6 @@ final class VaultStore: ObservableObject {
         self.items = items
         self.events = events
         refreshPassphraseScope()
-        deviceRejected = false
         discardImportSource()
         withAnimation(Motion.snappy) { phase = .unlocked }
     }
@@ -293,7 +275,13 @@ final class VaultStore: ObservableObject {
     private func failUnlock(_ error: Error) {
         key = nil
         items = []
-        if case VaultError.deviceNotEnrolled = error { deviceRejected = true }
+        // deviceNotEnrolled 是「這個保險庫沒有這台的鑰匙」，不是「你是誰沒證明」。
+        // 退回 .locked 會要求再驗證一次身分，而再驗證幾次也開不了這個保險庫。
+        if case VaultError.deviceNotEnrolled = error {
+            message = "「\(currentVaultName)」沒有這台 Mac 的鑰匙。換一個保險庫，或從原本那台重新匯出一份檔案匯入。"
+            withAnimation(Motion.snappy) { phase = .unavailable }
+            return
+        }
         message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         withAnimation(Motion.snappy) { phase = .locked }
     }
@@ -305,12 +293,8 @@ final class VaultStore: ObservableObject {
         lock()
         VaultCatalogue.select(id)
         currentVaultID = id
-        deviceRejected = false
         message = nil
         refreshPassphraseScope()
-        // A vault this machine has never been bound to is opened by its code,
-        // not by the enclave, so do not start an unlock that can only fail.
-        guard !needsAdoption else { return }
         unlock()
     }
 
@@ -573,51 +557,6 @@ final class VaultStore: ObservableObject {
             try? VaultKeyStore.save(envelope, vaultID: vault.id)
         }
         refreshPassphraseScope()
-    }
-
-    /// Takes a vault copied from another Mac and re-wraps its key for this one.
-    func adopt(withPassphrase passphrase: String) {
-        message = nil
-        Task.detached(priority: .userInitiated) {
-            do {
-                guard var envelope = VaultKeyStore.load() else { throw VaultError.enclaveMissing }
-                guard let wrapped = envelope.codeWrap?.blob else { throw VaultError.noPassphraseSet }
-                let derived = VaultKeyStore.passphraseKey(
-                    passphrase, salt: envelope.kdf.salt, rounds: envelope.kdf.rounds
-                )
-                guard let vaultKey = try? VaultKeyStore.unwrap(wrapped, with: derived) else {
-                    throw VaultError.wrongPassphrase
-                }
-                // The passphrase has already produced the vault key, so the
-                // vault opens either way. Binding this Mac to it is a
-                // convenience for next time — if the system prompt is
-                // dismissed or fails, say so instead of refusing entry and
-                // leaving the reader to think the passphrase was wrong.
-                var bound = true
-                do {
-                    let enclaveKey = try DeviceKey.current(reason: "把這個保險庫綁到這台 Mac")
-                    envelope.replace(try VaultKeyStore.deviceWrap(for: vaultKey, enclaveKey: enclaveKey))
-                    // The code was for one journey. Once this Mac can open the
-                    // vault itself, the code stops being a key to it.
-                    envelope.removeTransfer()
-                    try VaultKeyStore.save(envelope)
-                } catch {
-                    bound = false
-                }
-                let items = try VaultFile.load(key: vaultKey)
-                await MainActor.run {
-                    self.finishUnlock(key: vaultKey, items: items)
-                    if !bound {
-                        self.message = "已開啟，但這台 Mac 還沒綁定，下次仍需備份密碼"
-                    }
-                }
-            } catch {
-                // Drop any cached enclave key so a retry starts clean rather
-                // than reusing whatever the failed attempt left behind.
-                DeviceKey.forget()
-                await MainActor.run { self.failUnlock(error) }
-            }
-        }
     }
 
     /// Copies a secret and wipes it from the pasteboard after a short window.

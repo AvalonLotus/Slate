@@ -157,7 +157,7 @@ struct VaultListView: View {
             Button(action: onCreate) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
-                    Text("新增第一筆")
+                    Text("新增")
                 }
             }
             .buttonStyle(CapsuleButtonStyle())

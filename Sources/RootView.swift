@@ -83,6 +83,9 @@ struct RootView: View {
                     .id(route.id)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
+            } else if store.phase == .unavailable {
+                UnavailableView()
+                    .transition(.opacity)
             } else {
                 LockView()
                     .transition(.opacity)

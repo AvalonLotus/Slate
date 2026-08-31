@@ -53,11 +53,15 @@ struct DesktopFace: View {
 
             Spacer(minLength: 0)
 
-            Text(store.message ?? "點一下用 Touch ID 開啟")
-                .font(.system(size: 11))
-                .foregroundStyle(store.message == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color(red: 0.95, green: 0.35, blue: 0.35)))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+            // 只在真的有話要說時才佔一行。卡片鎖著時的提示是廢話——上面已經
+            // 寫著「已鎖定」，指紋圖示也在那裡，再說一次點哪裡沒有多給資訊。
+            if let message = store.message {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(red: 0.95, green: 0.35, blue: 0.35))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(16)
         .frame(width: Metrics.cardWidth, height: Metrics.cardCollapsedHeight, alignment: .topLeading)

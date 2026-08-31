@@ -5,8 +5,6 @@ import UniformTypeIdentifiers
 struct LockView: View {
     @EnvironmentObject private var store: VaultStore
     @State private var pulse = false
-    @State private var restoring = false
-    @State private var passphrase = ""
 
     private var isBusy: Bool { store.phase == .unlocking }
 
@@ -65,65 +63,21 @@ struct LockView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            if restoring || store.needsAdoption {
-                VStack(spacing: 10) {
-                    SecureField("備份密碼", text: $passphrase)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .frame(width: 220)
-                        .cardBackground(radius: 12)
-                        .onSubmit(submitRestore)
-
-                    HStack(spacing: 8) {
-                        if !store.needsAdoption {
-                            Button("取消") {
-                                withAnimation(Motion.snappy) { restoring = false }
-                                passphrase = ""
-                            }
-                            .buttonStyle(CapsuleButtonStyle(filled: false))
-                        }
-
-                        Button("用備份密碼開啟") { submitRestore() }
-                            .buttonStyle(CapsuleButtonStyle())
-                            // Only an empty field stops a submission: someone
-                            // retrying a passphrase must never be made to wait
-                            // on anything else.
-                            .disabled(passphrase.isEmpty)
-                            .opacity(passphrase.isEmpty ? 0.45 : 1)
-                    }
+            Button {
+                store.unlock()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: isBusy ? "ellipsis" : "touchid")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(isBusy ? "驗證中" : (EnclaveKey.hasBiometrics ? "使用 Touch ID 解鎖" : "使用登入密碼解鎖"))
                 }
-                .padding(.top, 22)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else {
-                Button {
-                    store.unlock()
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: isBusy ? "ellipsis" : "touchid")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text(isBusy ? "驗證中" : (EnclaveKey.hasBiometrics ? "使用 Touch ID 解鎖" : "使用登入密碼解鎖"))
-                    }
-                }
-                .buttonStyle(CapsuleButtonStyle())
-                .disabled(isBusy)
-                .opacity(isBusy ? 0.6 : 1)
-                .padding(.top, 22)
             }
+            .buttonStyle(CapsuleButtonStyle())
+            .disabled(isBusy)
+            .opacity(isBusy ? 0.6 : 1)
+            .padding(.top, 22)
 
             Spacer(minLength: 0)
-
-            if !restoring && !store.needsAdoption && store.restoreAvailable {
-                Button("從備份還原") {
-                    withAnimation(Motion.snappy) { restoring = true }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 6)
-            }
 
             // A vault that cannot be opened would otherwise be a dead end:
             // settings live behind the unlock, so there would be no way to
@@ -167,10 +121,7 @@ struct LockView: View {
     }
 
     private var lockSubtitle: String {
-        if store.needsAdoption {
-            return "這個保險庫還沒綁到這台 Mac\n輸入它的備份密碼即可加入"
-        }
-        return store.isFirstRun ? "第一次啟用，驗證身分後建立保險庫" : "已鎖定 · 需要驗證身分才能開啟"
+        store.isFirstRun ? "第一次啟用，驗證身分後建立保險庫" : "已鎖定 · 需要驗證身分才能開啟"
     }
 
     private func importVault() {
@@ -188,12 +139,4 @@ struct LockView: View {
         }
     }
 
-    private func submitRestore() {
-        guard !passphrase.isEmpty else { return }
-        store.adopt(withPassphrase: passphrase)
-        passphrase = ""
-        // The field stays put. A wrong passphrase has to be retryable on the
-        // spot rather than sending the reader back to find the way in again;
-        // a correct one replaces this screen with the unlocked vault anyway.
-    }
 }
