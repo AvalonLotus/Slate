@@ -21,9 +21,9 @@ enum VaultError: LocalizedError {
         switch self {
         case .biometryUnavailable:
             #if os(macOS)
-            return "這台 Mac 沒有可用的 Touch ID"
+            return "這台 Mac 無法驗證使用者身分，請先設定登入密碼或 Touch ID"
             #else
-            return "這台裝置沒有可用的生物辨識"
+            return "這台裝置無法驗證使用者身分"
             #endif
         case .accessControlFailed:
             return "無法建立安全區存取條件"
@@ -44,9 +44,23 @@ enum VaultError: LocalizedError {
 }
 
 /// Wraps the vault's symmetric key in a Secure Enclave P256 key whose private
-/// operations are gated by `.userPresence`, so every unlock costs one Touch ID.
+/// operations are gated by `.userPresence`, so every unlock costs one Touch ID
+/// — or the login password on a Mac without it.
 enum EnclaveKey {
     private static let salt = Data("com.avalonlotus.keyvault.hkdf.v1".utf8)
+
+    /// True when this Mac can actually take a fingerprint, which decides how
+    /// the unlock is described rather than whether it is possible at all.
+    static var hasBiometrics: Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        var error: NSError?
+        return LAContext().canEvaluatePolicy(
+            .deviceOwnerAuthenticationWithBiometrics, error: &error
+        )
+        #endif
+    }
 
     static var isSupported: Bool {
         #if targetEnvironment(simulator)
@@ -54,7 +68,10 @@ enum EnclaveKey {
         #else
         guard SecureEnclave.isAvailable else { return false }
         var error: NSError?
-        return LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+        // Not the biometrics-only policy: a Mac mini has a Secure Enclave but
+        // no Touch ID, and .userPresence falls back to the login password
+        // there. Demanding biometrics would lock those machines out entirely.
+        return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
         #endif
     }
 

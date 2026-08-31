@@ -46,7 +46,7 @@ struct LockView: View {
             VStack(spacing: 7) {
                 Text(Brand.name)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                Text(store.isFirstRun ? "第一次啟用，用 Touch ID 建立保險庫" : "已鎖定 · 需要 Touch ID 才能開啟")
+                Text(store.isFirstRun ? "第一次啟用，驗證身分後建立保險庫" : "已鎖定 · 需要驗證身分才能開啟")
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -97,7 +97,7 @@ struct LockView: View {
                     HStack(spacing: 7) {
                         Image(systemName: isBusy ? "ellipsis" : "touchid")
                             .font(.system(size: 14, weight: .semibold))
-                        Text(isBusy ? "驗證中" : "使用 Touch ID 解鎖")
+                        Text(isBusy ? "驗證中" : (EnclaveKey.hasBiometrics ? "使用 Touch ID 解鎖" : "使用登入密碼解鎖"))
                     }
                 }
                 .buttonStyle(CapsuleButtonStyle())
