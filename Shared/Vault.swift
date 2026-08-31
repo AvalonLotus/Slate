@@ -164,6 +164,8 @@ final class VaultStore: ObservableObject {
     @Published private(set) var vaults: [VaultDescriptor] = VaultCatalogue.all
     @Published private(set) var currentVaultID: String = Paths.currentVaultID
     @Published var message: String?
+    /// Shown after an export so the reader can carry it to the other machine.
+    @Published var transferCode: String?
     @Published var search: String = ""
 
     private var key: SymmetricKey?
@@ -207,7 +209,7 @@ final class VaultStore: ObservableObject {
     /// True when a passphrase wrap exists, meaning the vault can be opened
     /// without this Mac's enclave.
     var restoreAvailable: Bool {
-        VaultKeyStore.load()?.hasPassphrase == true
+        VaultKeyStore.load()?.codeWrap != nil
     }
 
     /// An imported vault carries no wrap for this machine, so the backup
@@ -215,7 +217,7 @@ final class VaultStore: ObservableObject {
     /// for — not a grey link under everything else.
     var needsAdoption: Bool {
         guard let envelope = VaultKeyStore.load() else { return false }
-        return envelope.hasPassphrase && envelope.deviceWrap(id: DeviceIdentity.id) == nil
+        return envelope.codeWrap != nil && envelope.deviceWrap(id: DeviceIdentity.id) == nil
     }
 
     var visibleItems: [KeyItem] { items.filter { !$0.isDeleted } }
@@ -400,15 +402,19 @@ final class VaultStore: ObservableObject {
 
     /// The receiving Mac can only open the bundle with the master passphrase,
     /// so exporting without one would produce a file nobody can use.
+    /// The code is generated here and shown to the reader; it is the only way
+    /// into the file and is never stored, so nothing about this machine's own
+    /// unlock is needed on the other end.
     func exportBundle(to url: URL) {
-        guard hasPassphrase else {
-            message = "先設定備份密碼，另一台才打得開"
+        guard let vaultKey = key else {
+            message = "先解鎖再匯出"
             return
         }
         do {
-            let bundle = try VaultBundle.make(name: currentVaultName)
+            let (bundle, code) = try VaultBundle.make(name: currentVaultName, vaultKey: vaultKey)
             try JSONEncoder().encode(bundle).write(to: url, options: .atomic)
-            message = "已匯出 \(currentVaultName)"
+            transferCode = code
+            message = nil
         } catch {
             message = "匯出失敗：\(error.localizedDescription)"
         }
@@ -467,7 +473,7 @@ final class VaultStore: ObservableObject {
             currentVaultID = descriptor.id
             refreshPassphraseScope()
             importedBundleURL = url
-            message = "已匯入「\(bundle.name)」，用備份密碼開啟。開啟後會自動刪除來源檔"
+            message = "已匯入「\(bundle.name)」，輸入傳輸碼開啟。開啟後會自動刪除來源檔"
         } catch {
             message = "匯入失敗：檔案損壞或不是 Slate 匯出檔"
         }
@@ -557,18 +563,36 @@ final class VaultStore: ObservableObject {
         Task.detached(priority: .userInitiated) {
             do {
                 guard var envelope = VaultKeyStore.load() else { throw VaultError.enclaveMissing }
-                guard let wrapped = envelope.passphraseWrap?.blob else { throw VaultError.noPassphraseSet }
+                guard let wrapped = envelope.codeWrap?.blob else { throw VaultError.noPassphraseSet }
                 let derived = VaultKeyStore.passphraseKey(
                     passphrase, salt: envelope.kdf.salt, rounds: envelope.kdf.rounds
                 )
                 guard let vaultKey = try? VaultKeyStore.unwrap(wrapped, with: derived) else {
                     throw VaultError.wrongPassphrase
                 }
-                let enclaveKey = try DeviceKey.current(reason: "把這個保險庫綁到這台 Mac")
-                envelope.replace(try VaultKeyStore.deviceWrap(for: vaultKey, enclaveKey: enclaveKey))
-                try VaultKeyStore.save(envelope)
+                // The passphrase has already produced the vault key, so the
+                // vault opens either way. Binding this Mac to it is a
+                // convenience for next time — if the system prompt is
+                // dismissed or fails, say so instead of refusing entry and
+                // leaving the reader to think the passphrase was wrong.
+                var bound = true
+                do {
+                    let enclaveKey = try DeviceKey.current(reason: "把這個保險庫綁到這台 Mac")
+                    envelope.replace(try VaultKeyStore.deviceWrap(for: vaultKey, enclaveKey: enclaveKey))
+                    // The code was for one journey. Once this Mac can open the
+                    // vault itself, the code stops being a key to it.
+                    envelope.removeTransfer()
+                    try VaultKeyStore.save(envelope)
+                } catch {
+                    bound = false
+                }
                 let items = try VaultFile.load(key: vaultKey)
-                await MainActor.run { self.finishUnlock(key: vaultKey, items: items) }
+                await MainActor.run {
+                    self.finishUnlock(key: vaultKey, items: items)
+                    if !bound {
+                        self.message = "已開啟，但這台 Mac 還沒綁定，下次仍需備份密碼"
+                    }
+                }
             } catch {
                 await MainActor.run { self.failUnlock(error) }
             }
@@ -664,12 +688,22 @@ struct VaultBundle: Codable {
     var envelope: Data
     var payload: Data
 
-    static func make(name: String) throws -> VaultBundle {
-        guard let envelope = try? Data(contentsOf: Paths.keyEnvelope) else {
-            throw VaultError.enclaveMissing
-        }
+    /// Builds a file that stands on its own: the vault key is re-wrapped under
+    /// a freshly generated code, and neither this machine's enclave wrap nor
+    /// its backup passphrase travels with it.
+    static func make(name: String, vaultKey: SymmetricKey) throws -> (bundle: VaultBundle, code: String) {
+        guard var envelope = VaultKeyStore.load() else { throw VaultError.enclaveMissing }
+        let code = VaultKeyStore.transferCode()
+        let salt = VaultKeyStore.randomSalt()
+        let rounds = VaultKeyStore.defaultRounds
+        let derived = VaultKeyStore.passphraseKey(code, salt: salt, rounds: rounds)
+
+        envelope.kdf = KDFParameters(rounds: rounds, salt: salt)
+        envelope.wraps = [KeyWrap(type: .transfer, blob: try VaultKeyStore.wrap(vaultKey, with: derived))]
+
         let payload = (try? Data(contentsOf: Paths.vault)) ?? Data()
-        return VaultBundle(name: name, envelope: envelope, payload: payload)
+        let data = try JSONEncoder().encode(envelope)
+        return (VaultBundle(name: name, envelope: data, payload: payload), code)
     }
 
     /// Writes the bundle into a fresh vault on this machine. The caller still

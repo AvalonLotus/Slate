@@ -404,6 +404,15 @@ struct KeyWrap: Codable, Equatable {
     enum Kind: String, Codable {
         case device
         case passphrase
+        /// Holds the vault key under a one-time code printed at export. It
+        /// exists only inside a transfer file and is removed once the machine
+        /// that received it has its own device wrap.
+        case transfer
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Kind(rawValue: raw) ?? .passphrase
+        }
     }
 
     var type: Kind
@@ -420,6 +429,15 @@ struct KeyEnvelope: Codable {
 
     var hasPassphrase: Bool { wraps.contains { $0.type == .passphrase } }
     var passphraseWrap: KeyWrap? { wraps.first { $0.type == .passphrase } }
+    var transferWrap: KeyWrap? { wraps.first { $0.type == .transfer } }
+
+    /// Either wrap a typed code can open, transfer first since it is the one
+    /// a freshly imported vault carries.
+    var codeWrap: KeyWrap? { transferWrap ?? passphraseWrap }
+
+    mutating func removeTransfer() {
+        wraps.removeAll { $0.type == .transfer }
+    }
 
     func deviceWrap(id: String) -> KeyWrap? {
         wraps.first { $0.type == .device && $0.id == id }
@@ -511,6 +529,18 @@ enum VaultKeyStore {
         let url = Paths.keyEnvelope(for: vaultID)
         try JSONEncoder().encode(envelope).write(to: url, options: [.atomic])
         Paths.restrictToOwner(url)
+    }
+
+    /// Six groups of four from an alphabet without look-alike characters, so
+    /// the code survives being read off one screen and typed into another.
+    static func transferCode() -> String {
+        let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        var bytes = [UInt8](repeating: 0, count: 24)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let characters = bytes.map { alphabet[Int($0) % alphabet.count] }
+        return stride(from: 0, to: characters.count, by: 4)
+            .map { String(characters[$0..<min($0 + 4, characters.count)]) }
+            .joined(separator: "-")
     }
 
     static func randomSalt() -> Data {

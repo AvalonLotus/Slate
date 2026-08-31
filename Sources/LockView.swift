@@ -65,7 +65,7 @@ struct LockView: View {
 
             if restoring || store.needsAdoption {
                 VStack(spacing: 10) {
-                    SecureField("備份密碼", text: $passphrase)
+                    SecureField(store.needsAdoption ? "傳輸碼" : "備份密碼", text: $passphrase)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .multilineTextAlignment(.center)
@@ -84,7 +84,7 @@ struct LockView: View {
                             .buttonStyle(CapsuleButtonStyle(filled: false))
                         }
 
-                        Button("用備份密碼開啟") { submitRestore() }
+                        Button(store.needsAdoption ? "用傳輸碼開啟" : "用備份密碼開啟") { submitRestore() }
                             .buttonStyle(CapsuleButtonStyle())
                             .disabled(passphrase.isEmpty || isBusy)
                             .opacity(passphrase.isEmpty || isBusy ? 0.45 : 1)
@@ -132,7 +132,7 @@ struct LockView: View {
 
     private var lockSubtitle: String {
         if store.needsAdoption {
-            return "這台 Mac 還沒有加入這個保險庫\n輸入備份密碼即可加入"
+            return "這台 Mac 還沒有加入這個保險庫\n輸入匯出時顯示的傳輸碼"
         }
         return store.isFirstRun ? "第一次啟用，驗證身分後建立保險庫" : "已鎖定 · 需要驗證身分才能開啟"
     }

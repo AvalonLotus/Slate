@@ -233,7 +233,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("轉移至其他裝置", systemImage: "arrow.left.arrow.right")
 
-            Text("將「\(store.currentVaultName)」匯出為加密檔案，於另一台裝置以備份密碼還原。")
+            Text("將「\(store.currentVaultName)」匯出為加密檔案。匯出時會產生一組傳輸碼，另一台輸入該碼即可開啟。")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -248,10 +248,41 @@ struct SettingsView: View {
                     .buttonStyle(CapsuleButtonStyle(filled: false))
             }
 
-            if !store.hasPassphrase {
-                Text("尚未設定備份密碼，無法匯出。")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.25))
+            if let code = store.transferCode {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("傳輸碼 · 只顯示這一次")
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        Text(code)
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .textSelection(.enabled)
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            store.copy(code)
+                        } label: {
+                            Image(systemName: "doc.on.doc.fill")
+                        }
+                        .buttonStyle(GlassButtonStyle(size: 24))
+                        .help("複製")
+
+                        Button {
+                            store.transferCode = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .buttonStyle(GlassButtonStyle(size: 24))
+                        .help("收起")
+                    }
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground(radius: 12)
             }
         }
         .padding(.horizontal, 13)
