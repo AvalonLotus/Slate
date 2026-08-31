@@ -268,17 +268,22 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("版本", systemImage: "arrow.down.circle.fill")
 
-            Text(updateDescription)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Text(updateDescription)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Button(updateLabel) {
-                updates.install()
+                Spacer(minLength: 0)
+
+                Button(updateLabel) {
+                    updates.install()
+                }
+                .buttonStyle(CapsuleButtonStyle(filled: updateAvailable))
+                .disabled(!updateActionable)
+                .opacity(updateActionable ? 1 : 0.45)
+                .fixedSize()
             }
-            .buttonStyle(CapsuleButtonStyle(filled: updateAvailable))
-            .disabled(!updateActionable)
-            .opacity(updateActionable ? 1 : 0.45)
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 12)

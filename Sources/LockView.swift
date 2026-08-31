@@ -46,7 +46,7 @@ struct LockView: View {
             VStack(spacing: 7) {
                 Text(Brand.name)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                Text(store.isFirstRun ? "第一次啟用，驗證身分後建立保險庫" : "已鎖定 · 需要驗證身分才能開啟")
+                Text(lockSubtitle)
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -63,7 +63,7 @@ struct LockView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            if restoring {
+            if restoring || store.needsAdoption {
                 VStack(spacing: 10) {
                     SecureField("備份密碼", text: $passphrase)
                         .textFieldStyle(.plain)
@@ -76,11 +76,13 @@ struct LockView: View {
                         .onSubmit(submitRestore)
 
                     HStack(spacing: 8) {
-                        Button("取消") {
-                            withAnimation(Motion.snappy) { restoring = false }
-                            passphrase = ""
+                        if !store.needsAdoption {
+                            Button("取消") {
+                                withAnimation(Motion.snappy) { restoring = false }
+                                passphrase = ""
+                            }
+                            .buttonStyle(CapsuleButtonStyle(filled: false))
                         }
-                        .buttonStyle(CapsuleButtonStyle(filled: false))
 
                         Button("用備份密碼開啟") { submitRestore() }
                             .buttonStyle(CapsuleButtonStyle())
@@ -108,7 +110,7 @@ struct LockView: View {
 
             Spacer(minLength: 0)
 
-            if !restoring && store.restoreAvailable {
+            if !restoring && !store.needsAdoption && store.restoreAvailable {
                 Button("從備份還原") {
                     withAnimation(Motion.snappy) { restoring = true }
                 }
@@ -126,6 +128,13 @@ struct LockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(Motion.snappy, value: store.message)
         .onAppear { pulse = true }
+    }
+
+    private var lockSubtitle: String {
+        if store.needsAdoption {
+            return "這台 Mac 還沒有加入這個保險庫\n輸入備份密碼即可加入"
+        }
+        return store.isFirstRun ? "第一次啟用，驗證身分後建立保險庫" : "已鎖定 · 需要驗證身分才能開啟"
     }
 
     private func submitRestore() {

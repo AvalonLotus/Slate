@@ -201,11 +201,18 @@ final class VaultStore: ObservableObject {
 
     var isFirstRun: Bool { !EnclaveKey.exists }
 
-    /// True when a passphrase-wrapped envelope exists locally or in the cloud
-    /// folder, meaning the vault can be opened without this Mac's enclave.
+    /// True when a passphrase wrap exists, meaning the vault can be opened
+    /// without this Mac's enclave.
     var restoreAvailable: Bool {
-        if VaultKeyStore.load()?.hasPassphrase == true { return true }
-        return VaultKeyStore.load()?.hasPassphrase == true
+        VaultKeyStore.load()?.hasPassphrase == true
+    }
+
+    /// An imported vault carries no wrap for this machine, so the backup
+    /// passphrase is the only way in and should be what the lock screen asks
+    /// for — not a grey link under everything else.
+    var needsAdoption: Bool {
+        guard let envelope = VaultKeyStore.load() else { return false }
+        return envelope.hasPassphrase && envelope.deviceWrap(id: DeviceIdentity.id) == nil
     }
 
     var visibleItems: [KeyItem] { items.filter { !$0.isDeleted } }
