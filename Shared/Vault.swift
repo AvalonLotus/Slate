@@ -238,8 +238,12 @@ final class VaultStore: ObservableObject {
         guard phase == .locked else { return }
         // A vault with no wrap for this machine can only be opened by typing
         // its passphrase, so do not raise a system prompt that must fail and
-        // do not sit in .unlocking while the reader is trying to type.
-        guard !needsAdoption else { return }
+        // do not sit in .unlocking while the reader is trying to type. Say so
+        // rather than returning in silence, which reads as a dead button.
+        guard !needsAdoption else {
+            message = "這個保險庫還沒綁到這台 Mac，請用它的備份密碼開啟，或改匯入其他檔案"
+            return
+        }
         guard EnclaveKey.isSupported else {
             message = VaultError.biometryUnavailable.errorDescription
             return
