@@ -164,8 +164,6 @@ final class VaultStore: ObservableObject {
     @Published private(set) var vaults: [VaultDescriptor] = VaultCatalogue.all
     @Published private(set) var currentVaultID: String = Paths.currentVaultID
     @Published var message: String?
-    /// Shown after an export so the reader can carry it to the other machine.
-    @Published var transferCode: String?
     @Published var search: String = ""
 
     private var key: SymmetricKey?
@@ -405,19 +403,16 @@ final class VaultStore: ObservableObject {
 
     /// The receiving Mac can only open the bundle with the master passphrase,
     /// so exporting without one would produce a file nobody can use.
-    /// The code is generated here and shown to the reader; it is the only way
-    /// into the file and is never stored, so nothing about this machine's own
-    /// unlock is needed on the other end.
     func exportBundle(to url: URL) {
         guard let vaultKey = key else {
             message = "先解鎖再匯出"
             return
         }
         do {
-            let (bundle, code) = try VaultBundle.make(name: currentVaultName, vaultKey: vaultKey)
+            let bundle = try VaultBundle.make(name: currentVaultName, vaultKey: vaultKey)
             try JSONEncoder().encode(bundle).write(to: url, options: .atomic)
-            transferCode = code
-            message = nil
+            Paths.restrictToOwner(url)
+            message = "已匯出。這個檔案可以直接開啟，匯入後請刪除"
         } catch {
             message = "匯出失敗：\(error.localizedDescription)"
         }
@@ -476,7 +471,7 @@ final class VaultStore: ObservableObject {
             currentVaultID = descriptor.id
             refreshPassphraseScope()
             importedBundleURL = url
-            message = "已匯入「\(bundle.name)」，輸入傳輸碼開啟。開啟後會自動刪除來源檔"
+            unlock()
         } catch {
             message = "匯入失敗：檔案損壞或不是 Slate 匯出檔"
         }
@@ -691,29 +686,27 @@ struct VaultBundle: Codable {
     var formatVersion = 3
     var name: String
     var exportedAt = Date()
+    /// Empty in files written from this version on; older files carry the
+    /// sending machine's envelope here.
     var envelope: Data
     var payload: Data
+    /// The vault key in the clear, which is what lets the receiving machine
+    /// open the file without being told anything.
+    var vaultKey: Data?
 
-    /// Builds a file that stands on its own: the vault key is re-wrapped under
-    /// a freshly generated code, and neither this machine's enclave wrap nor
-    /// its backup passphrase travels with it.
-    static func make(name: String, vaultKey: SymmetricKey) throws -> (bundle: VaultBundle, code: String) {
-        guard var envelope = VaultKeyStore.load() else { throw VaultError.enclaveMissing }
-        let code = VaultKeyStore.transferCode()
-        let salt = VaultKeyStore.randomSalt()
-        let rounds = VaultKeyStore.defaultRounds
-        let derived = VaultKeyStore.passphraseKey(code, salt: salt, rounds: rounds)
-
-        envelope.kdf = KDFParameters(rounds: rounds, salt: salt)
-        envelope.wraps = [KeyWrap(type: .transfer, blob: try VaultKeyStore.wrap(vaultKey, with: derived))]
-
+    /// Builds a file that opens by itself. The vault key travels with it, so
+    /// the machine receiving it needs nothing from the machine that sent it —
+    /// no code, no passphrase. The file is therefore readable by whoever
+    /// holds it, and is deleted as soon as it has been used.
+    static func make(name: String, vaultKey: SymmetricKey) throws -> VaultBundle {
         let payload = (try? Data(contentsOf: Paths.vault)) ?? Data()
-        let data = try JSONEncoder().encode(envelope)
-        return (VaultBundle(name: name, envelope: data, payload: payload), code)
+        let key = vaultKey.withUnsafeBytes { Data($0) }
+        return VaultBundle(name: name, envelope: Data(), payload: payload, vaultKey: key)
     }
 
-    /// Writes the bundle into a fresh vault on this machine. The caller still
-    /// has to unlock it with the master passphrase afterwards.
+    /// Writes the bundle into a fresh vault on this machine and binds it to
+    /// this machine's own Secure Enclave, so from here on it unlocks the way
+    /// every other vault on this Mac does.
     @discardableResult
     func install() throws -> VaultDescriptor {
         let descriptor = VaultCatalogue.create(name: name)
@@ -722,9 +715,22 @@ struct VaultBundle: Codable {
             at: directory, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        try envelope.write(to: directory.appendingPathComponent("keys.json"), options: .atomic)
         if !payload.isEmpty {
             try payload.write(to: directory.appendingPathComponent("vault.dat"), options: .atomic)
+        }
+
+        if let raw = vaultKey {
+            let enclaveKey = try DeviceKey.current(reason: "把這個保險庫綁到這台 Mac")
+            let envelope = KeyEnvelope(
+                kdf: KDFParameters(rounds: VaultKeyStore.defaultRounds, salt: VaultKeyStore.randomSalt()),
+                wraps: [try VaultKeyStore.deviceWrap(
+                    for: SymmetricKey(data: raw), enclaveKey: enclaveKey
+                )]
+            )
+            try VaultKeyStore.save(envelope, vaultID: descriptor.id)
+        } else {
+            // A file from before the key travelled with it.
+            try envelope.write(to: directory.appendingPathComponent("keys.json"), options: .atomic)
         }
         return descriptor
     }
