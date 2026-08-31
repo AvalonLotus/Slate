@@ -233,7 +233,7 @@ final class VaultStore: ObservableObject {
     /// 由 `.unavailable` 承接——把兩者綁在一起的話，一個從別台匯入的保險庫會把
     /// 整個 App 鎖在門外，連換一個保險庫的地方都進不去。
     func unlock() {
-        guard phase == .locked else { return }
+        guard phase == .locked || phase == .unavailable else { return }
         guard EnclaveKey.isSupported else {
             message = VaultError.biometryUnavailable.errorDescription
             return
@@ -272,13 +272,34 @@ final class VaultStore: ObservableObject {
         withAnimation(Motion.snappy) { phase = .unlocked }
     }
 
+    /// 這台綁定過的保險庫。
+    ///
+    /// 依據是信封裡有沒有這台的 device 封裝。真正解得開只有安全區說了算，但那要
+    /// 先跳一次驗證才知道；id 對得上是唯一能事先看出來的線索，而它足以把「另一台
+    /// 匯來的」與「這台自己建的」分開，這正是要判斷的那件事。
+    private static func vaultsBoundToThisMac() -> [VaultDescriptor] {
+        VaultCatalogue.all.filter { descriptor in
+            VaultKeyStore.load(vaultID: descriptor.id)?
+                .deviceWrap(id: DeviceIdentity.id) != nil
+        }
+    }
+
     private func failUnlock(_ error: Error) {
         key = nil
         items = []
         // deviceNotEnrolled 是「這個保險庫沒有這台的鑰匙」，不是「你是誰沒證明」。
         // 退回 .locked 會要求再驗證一次身分，而再驗證幾次也開不了這個保險庫。
         if case VaultError.deviceNotEnrolled = error {
-            message = "「\(currentVaultName)」沒有這台 Mac 的鑰匙。換一個保險庫，或從原本那台重新匯出一份檔案匯入。"
+            let stranded = currentVaultName
+            // 停在一個這台打不開的保險庫上沒有任何用處——桌面卡片與面板都會變成
+            // 一則無法照做的訊息。有別的保險庫開得了就換過去，把打不開的那個
+            // 降級成一句說明，而不是一道關卡。
+            if let fallback = Self.vaultsBoundToThisMac().first(where: { $0.id != currentVaultID }) {
+                switchVault(to: fallback.id)
+                message = "「\(stranded)」沒有這台 Mac 的鑰匙，已改開「\(fallback.name)」。"
+                return
+            }
+            message = "「\(stranded)」沒有這台 Mac 的鑰匙。從原本那台重新匯出一份檔案匯入即可。"
             withAnimation(Motion.snappy) { phase = .unavailable }
             return
         }
