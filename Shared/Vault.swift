@@ -168,6 +168,9 @@ final class VaultStore: ObservableObject {
 
     private var key: SymmetricKey?
     private var clipboardToken: Int = 0
+    /// The file an import came from. It holds the whole vault behind nothing
+    /// but the passphrase, so it is removed the moment the vault opens here.
+    private var importedBundleURL: URL?
 
     init() {
         Paths.migrateLegacyDirectoryIfNeeded()
@@ -252,11 +255,22 @@ final class VaultStore: ObservableObject {
         }
     }
 
+    /// Called once the vault is open on this machine, which is the point the
+    /// transfer file has done its job and should stop existing.
+    private func discardImportSource() {
+        guard let url = importedBundleURL else { return }
+        importedBundleURL = nil
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try? FileManager.default.removeItem(at: url)
+        message = "已匯入，來源檔已刪除"
+    }
+
     private func finishUnlock(key: SymmetricKey, items: [KeyItem], events: [AuditEvent] = []) {
         self.key = key
         self.items = items
         self.events = events
         refreshPassphraseScope()
+        discardImportSource()
         withAnimation(Motion.snappy) { phase = .unlocked }
     }
 
@@ -452,7 +466,8 @@ final class VaultStore: ObservableObject {
             VaultCatalogue.select(descriptor.id)
             currentVaultID = descriptor.id
             refreshPassphraseScope()
-            message = "已匯入「\(bundle.name)」，用備份密碼開啟"
+            importedBundleURL = url
+            message = "已匯入「\(bundle.name)」，用備份密碼開啟。開啟後會自動刪除來源檔"
         } catch {
             message = "匯入失敗：檔案損壞或不是 Slate 匯出檔"
         }
