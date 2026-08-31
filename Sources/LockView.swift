@@ -141,6 +141,8 @@ struct LockView: View {
         guard !passphrase.isEmpty else { return }
         store.adopt(withPassphrase: passphrase)
         passphrase = ""
-        withAnimation(Motion.snappy) { restoring = false }
+        // The field stays put. A wrong passphrase has to be retryable on the
+        // spot rather than sending the reader back to find the way in again;
+        // a correct one replaces this screen with the unlocked vault anyway.
     }
 }
