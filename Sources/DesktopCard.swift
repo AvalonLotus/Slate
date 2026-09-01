@@ -76,29 +76,6 @@ final class CardState: ObservableObject {
     @Published var lifted = false
 }
 
-/// Lets a view drag the window it lives in. The floating panel injects a no-op
-/// so the same views stay usable there.
-final class WindowDragProxy: ObservableObject {
-    var onMove: ((CGSize) -> Void)?
-    var onEnd: (() -> Void)?
-
-    private var last: CGSize = .zero
-
-    func drag(to translation: CGSize) {
-        let delta = CGSize(
-            width: translation.width - last.width,
-            height: translation.height - last.height
-        )
-        last = translation
-        onMove?(delta)
-    }
-
-    func end() {
-        last = .zero
-        onEnd?()
-    }
-}
-
 struct DesktopCardView: View {
     @EnvironmentObject private var store: VaultStore
     @EnvironmentObject private var card: CardState
@@ -197,7 +174,6 @@ final class DesktopCardController: NSObject, NSWindowDelegate {
     private var snapWork: DispatchWorkItem?
     private var isDragging = false
     private let cardState = CardState()
-    private let dragProxy = WindowDragProxy()
     private let gridOverlay = GridOverlayController()
     private var restingTopLeft: NSPoint = .zero
     /// The height we asked for. During an animation the window still reports
@@ -258,20 +234,10 @@ final class DesktopCardController: NSObject, NSWindowDelegate {
         effectView.layer?.masksToBounds = true
         container.addSubview(effectView)
 
-        dragProxy.onMove = { [weak self] delta in
-            guard let self else { return }
-            var frame = self.window.frame
-            frame.origin.x += delta.width
-            frame.origin.y -= delta.height
-            self.window.setFrameOrigin(frame.origin)
-        }
-        dragProxy.onEnd = { [weak self] in self?.scheduleSnap(after: 0.05) }
-
         let hosting = FirstMouseHostingView(
             rootView: DesktopCardView()
                 .environmentObject(store)
                 .environmentObject(cardState)
-                .environmentObject(dragProxy)
         )
         hosting.frame = cardFrame
         hosting.autoresizingMask = [.width, .height]

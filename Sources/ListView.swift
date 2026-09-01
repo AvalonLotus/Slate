@@ -2,7 +2,6 @@ import SwiftUI
 
 struct VaultListView: View {
     @EnvironmentObject private var store: VaultStore
-    @EnvironmentObject private var windowDrag: WindowDragProxy
     @FocusState private var searchFocused: Bool
     let onSelect: (KeyItem) -> Void
     let onCreate: () -> Void
@@ -105,12 +104,6 @@ struct VaultListView: View {
         .padding(.horizontal, Metrics.gutter)
         .padding(.top, 16)
         .padding(.bottom, 14)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 3)
-                .onChanged { windowDrag.drag(to: $0.translation) }
-                .onEnded { _ in windowDrag.end() }
-        )
     }
 
     private var searchField: some View {

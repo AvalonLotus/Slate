@@ -90,7 +90,6 @@ final class PanelController: NSObject, NSWindowDelegate {
             rootView: PanelHost()
                 .environmentObject(store)
                 .environmentObject(state)
-                .environmentObject(WindowDragProxy())
         )
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]

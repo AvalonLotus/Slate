@@ -22,7 +22,6 @@ func render<Content: View>(
             .background(dark ? Color(white: 0.05) : Color(white: 0.8))
             .environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.staticRendering, true)
-            .environmentObject(WindowDragProxy())
     )
     renderer.scale = 2
     guard let image = renderer.nsImage,
