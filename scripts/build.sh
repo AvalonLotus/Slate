@@ -24,7 +24,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 echo "Compiling app"
 swiftc -O -sdk "$SDK" -target "$TARGET" \
-    -framework AppKit -framework SwiftUI -framework LocalAuthentication \
+    -framework AppKit -framework SwiftUI -framework LocalAuthentication -framework ServiceManagement \
     -o "$APP/Contents/MacOS/$BINARY_NAME" \
     "$ROOT"/Shared/*.swift "$ROOT"/Sources/*.swift
 
@@ -53,7 +53,7 @@ for file in "$ROOT"/Shared/*.swift "$ROOT"/Sources/*.swift; do
     [ "$(basename "$file")" = "main.swift" ] || CLI_SOURCES+=("$file")
 done
 swiftc -O -sdk "$SDK" -target "$TARGET" \
-    -framework AppKit -framework SwiftUI -framework LocalAuthentication \
+    -framework AppKit -framework SwiftUI -framework LocalAuthentication -framework ServiceManagement \
     -o "$BUILD/bin/slate" "${CLI_SOURCES[@]}" "$ROOT/Tools/cli/main.swift"
 codesign --force --sign - "$BUILD/bin/slate"
 

@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -7,6 +8,35 @@ extension Notification.Name {
     /// losing key status as a reason to hide and lock.
     static let slateModalBegan = Notification.Name("SlateModalBegan")
     static let slateModalEnded = Notification.Name("SlateModalEnded")
+}
+
+/// Whether Slate comes back after a restart is the system's fact, not a
+/// preference of ours: the switch reads the login item database itself, so
+/// switching Slate off in System Settings also shows up here.
+@MainActor
+final class LoginItem: ObservableObject {
+    @Published private(set) var status = SMAppService.mainApp.status
+    @Published private(set) var failure: String?
+
+    var isEnabled: Bool { status == .enabled }
+
+    func refresh() {
+        status = SMAppService.mainApp.status
+    }
+
+    func set(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            failure = nil
+        } catch {
+            failure = error.localizedDescription
+        }
+        refresh()
+    }
 }
 
 struct SettingsView: View {
@@ -18,6 +48,7 @@ struct SettingsView: View {
     @State private var passphraseRepeat = ""
     @State private var revealPassphrase = false
     @StateObject private var updates = UpdateChecker()
+    @StateObject private var login = LoginItem()
     @State private var confirmingRemoval = false
     @State private var passphraseExpanded = false
 
@@ -29,6 +60,7 @@ struct SettingsView: View {
                 VStack(spacing: 14) {
                     passphraseSection
                     unlockSection
+                    startupSection
                     transferSection
                     updateSection
                 }
@@ -83,6 +115,51 @@ struct SettingsView: View {
         // content while the talkative ones stretch.
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardBackground()
+    }
+
+    // MARK: - Start at login
+
+    private var startupSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("開機時啟動", systemImage: "power")
+
+            Text("登入 macOS 後自己開起來，桌面卡片回到原本的位置。")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button("開啟") { login.set(true) }
+                    .buttonStyle(CapsuleButtonStyle(filled: login.isEnabled))
+
+                Button("關閉") { login.set(false) }
+                    .buttonStyle(CapsuleButtonStyle(filled: !login.isEnabled))
+            }
+
+            // Registering succeeds even when the user has switched Slate off in
+            // System Settings; only that panel can turn it back on.
+            if login.status == .requiresApproval {
+                Text("系統設定裡把 Slate 關掉了，要在那邊重新允許。")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.25))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button("開啟系統設定") { SMAppService.openSystemSettingsLoginItems() }
+                    .buttonStyle(CapsuleButtonStyle(filled: false))
+            } else if let failure = login.failure {
+                Text(failure)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.25))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 12)
+        // Every section is one column: a short card must not shrink to its
+        // content while the talkative ones stretch.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+        .onAppear { login.refresh() }
     }
 
     // MARK: - Master passphrase
