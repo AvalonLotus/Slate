@@ -73,7 +73,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// An accessory app has no menu bar, and AppKit only turns ⌘X/⌘C/⌘V/⌘A
+    /// into cut:/copy:/paste:/selectAll: through the Edit menu's key
+    /// equivalents. With no main menu nothing translates the keystroke, so
+    /// every text field silently ignored it. The bar stays hidden either way;
+    /// only the key equivalents matter here.
+    private func installMainMenu() {
+        let main = NSMenu()
+
+        // The first submenu is always taken as the app menu, so 編輯 needs a
+        // placeholder ahead of it or it would be swallowed.
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu()
+        main.addItem(appItem)
+
+        let edit = NSMenu(title: "編輯")
+        edit.addItem(withTitle: "復原", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "剪下", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "拷貝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "貼上", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "全選", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        // Targets stay nil so each action walks the responder chain down to
+        // whichever field editor is first responder.
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        NSApp.mainMenu = main
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMainMenu()
         takeOverFromOtherInstances()
         AgentProtocol.deleteHandler = { [weak self] name in
             guard let self else { return false }
