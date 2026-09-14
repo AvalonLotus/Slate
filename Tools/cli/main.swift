@@ -27,9 +27,9 @@ let usage = """
 
 值一律從標準輸入讀，不放在指令參數裡，免得留在 shell 紀錄或行程清單。
 
-Slate 開著時一律向它取值：鎖著就請它解鎖一次，同一個解鎖窗內的後續
-指令都不再詢問。Slate 沒開才會在這裡自行開啟保險庫，那是每執行一次
-就驗證一次。
+Slate 開著時一律向它取值：鎖著就請它解鎖一次，之後的指令都不再詢問，
+直到你按上鎖、Mac 睡著、螢幕鎖上或 Slate 結束。收起面板不算。
+Slate 沒開才會在這裡自行開啟保險庫，那是每執行一次就驗證一次。
 """
 
 /// Secrets arrive on stdin so they never appear in `ps` or shell history.

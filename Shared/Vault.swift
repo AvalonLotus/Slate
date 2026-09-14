@@ -174,6 +174,10 @@ final class VaultStore: ObservableObject {
     @Published var search: String = ""
 
     private var key: SymmetricKey?
+    /// 命令列要過一次驗證才拿得到東西，而它沒有視窗可以關。所以那次解鎖是常駐的：
+    /// 面板收起來、桌面卡片閒置，都只是把畫面收起來，socket 那頭照樣讀得到。
+    /// 真正關上的是明確上鎖、睡眠、螢幕鎖定，或結束 App。
+    private(set) var agentHold = false
     private var clipboardToken: Int = 0
     /// The file an import came from. It holds the whole vault behind nothing
     /// but the passphrase, so it is removed the moment the vault opens here.
@@ -311,7 +315,8 @@ final class VaultStore: ObservableObject {
     /// must never survive into the next one.
     func switchVault(to id: String) {
         guard id != currentVaultID else { return }
-        lock()
+        discardOpenVault()
+        search = ""
         VaultCatalogue.select(id)
         currentVaultID = id
         message = nil
@@ -350,21 +355,40 @@ final class VaultStore: ObservableObject {
         }
     }
 
-    /// Clears the open vault but leaves the unlock window running, so hiding
-    /// the panel or switching companies does not cost another scan.
-    func lock() {
+    /// 命令列要求過解鎖之後就常駐，這裡只收畫面。
+    func holdForAgent() {
+        agentHold = true
+    }
+
+    /// 把開著的保險庫整個丟掉：金鑰、內容，以及 socket 讀的那份副本。
+    /// 換公司一定要走這裡，不管命令列握著什麼——一個庫的內容絕不能掛在
+    /// 另一個庫名下被讀到，更不能被寫回去。
+    private func discardOpenVault() {
         key = nil
         SecretSnapshot.shared.clear()
         items = []
         events = []
-        search = ""
-        message = nil
         phase = .locked
     }
 
+    /// 收起畫面。解鎖窗照樣跑著，所以再打開不必再刷一次。
+    func lock() {
+        search = ""
+        message = nil
+        // 常駐期間收面板只是收面板：內容留著，不然下一個 slate 指令又要驗一次，
+        // 而那正是命令列剛剛驗過的那件事。
+        guard !agentHold else {
+            phase = .locked
+            return
+        }
+        discardOpenVault()
+    }
+
     /// What the lock button means: the unlock window closes with the vault, so
-    /// the next open needs Touch ID.
+    /// the next open needs Touch ID. This is also what ends a command line
+    /// hold — along with sleep and screen lock, which go through here too.
     func lockNow() {
+        agentHold = false
         DeviceKey.forget()
         lock()
     }

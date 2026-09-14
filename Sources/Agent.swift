@@ -57,8 +57,9 @@ enum AgentProtocol {
     static func handle(_ request: AgentRequest, snapshot: SecretSnapshot) -> AgentResponse {
         // Answered while locked, since it is the way out of being locked.
         if request.command == "unlock" {
-            if snapshot.isUnlocked { return AgentResponse(ok: true) }
-            guard let unlockHandler else { return .failure("unlock unavailable") }
+            guard let unlockHandler else {
+                return snapshot.isUnlocked ? AgentResponse(ok: true) : .failure("unlock unavailable")
+            }
             return unlockHandler() ? AgentResponse(ok: true) : .failure("解鎖未完成")
         }
         guard snapshot.isUnlocked else { return .failure("locked") }

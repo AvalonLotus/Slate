@@ -18,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var card: DesktopCardController!
     private var hotKey: HotKey?
     private let agent = AgentServer()
-    private var agentRelock: DispatchWorkItem?
 
     /// The write half of the agent protocol. Names identify entries, because
     /// that is what a caller knows; ids never leave the app.
@@ -173,9 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// Runs on the agent queue and blocks it until the sheet is answered, so
     /// requests arriving meanwhile queue up behind this one and then find the
-    /// vault already open.
+    /// vault already open. The unlock it wins is held until the vault is
+    /// locked outright — see `VaultStore.agentHold`.
     nonisolated private func unlockForAgent() -> Bool {
-        if SecretSnapshot.shared.isUnlocked { return true }
+        if SecretSnapshot.shared.isUnlocked {
+            onMainThread { self.store.holdForAgent() }
+            return true
+        }
 
         let started = onMainThread { () -> VaultStore.Phase in
             self.store.unlock()
@@ -188,29 +191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline {
             if SecretSnapshot.shared.isUnlocked {
-                onMainThread { self.armAgentRelock() }
+                onMainThread { self.store.holdForAgent() }
                 return true
             }
             guard onMainThread({ self.store.phase }) == .unlocking else { return false }
             Thread.sleep(forTimeInterval: 0.08)
         }
         return false
-    }
-
-    /// An unlock the command line asked for has no window to close, so it has
-    /// to end on its own. Locking keeps the unlock window running, so a script
-    /// that comes back inside it is served without another prompt.
-    private func armAgentRelock() {
-        agentRelock?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                guard self.panel?.isVisible != true, self.card?.isExpanded != true else { return }
-                self.store.lock()
-            }
-        }
-        agentRelock = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + UnlockWindow.seconds, execute: work)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
