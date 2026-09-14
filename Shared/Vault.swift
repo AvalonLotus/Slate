@@ -174,10 +174,6 @@ final class VaultStore: ObservableObject {
     @Published var search: String = ""
 
     private var key: SymmetricKey?
-    /// 命令列要過一次驗證才拿得到東西，而它沒有視窗可以關。所以那次解鎖是常駐的：
-    /// 面板收起來、桌面卡片閒置，都只是把畫面收起來，socket 那頭照樣讀得到。
-    /// 真正關上的是明確上鎖、睡眠、螢幕鎖定，或結束 App。
-    private(set) var agentHold = false
     private var clipboardToken: Int = 0
     /// The file an import came from. It holds the whole vault behind nothing
     /// but the passphrase, so it is removed the moment the vault opens here.
@@ -289,8 +285,8 @@ final class VaultStore: ObservableObject {
     }
 
     private func failUnlock(_ error: Error) {
-        key = nil
-        items = []
+        // 已經開著的內容留著：驗證沒過是「這次沒證明你是誰」，不是「剛才那次不算」。
+        // 真要收掉是 lockNow 的事。
         // deviceNotEnrolled 是「這個保險庫沒有這台的鑰匙」，不是「你是誰沒證明」。
         // 退回 .locked 會要求再驗證一次身分，而再驗證幾次也開不了這個保險庫。
         if case VaultError.deviceNotEnrolled = error {
@@ -355,42 +351,45 @@ final class VaultStore: ObservableObject {
         }
     }
 
-    /// 命令列要求過解鎖之後就常駐，這裡只收畫面。
-    func holdForAgent() {
-        agentHold = true
-    }
-
     /// 把開著的保險庫整個丟掉：金鑰、內容，以及 socket 讀的那份副本。
-    /// 換公司一定要走這裡，不管命令列握著什麼——一個庫的內容絕不能掛在
-    /// 另一個庫名下被讀到，更不能被寫回去。
+    ///
+    /// 清空的順序不能反。`items` 的 didSet 會把值推進 snapshot，而推進去這個動作
+    /// 本身就代表「開著」——先 clear 再清 items，等於清完又被標記成開著，socket
+    /// 那頭看到的會是一個空的、開著的保險庫：每一筆都回「找不到」，而不是「鎖著」。
     private func discardOpenVault() {
         key = nil
-        SecretSnapshot.shared.clear()
         items = []
         events = []
+        SecretSnapshot.shared.clear()
         phase = .locked
     }
 
-    /// 收起畫面。解鎖窗照樣跑著，所以再打開不必再刷一次。
+    /// 收起畫面，如此而已。
+    ///
+    /// 解開過的東西就是解開了：面板收起來、桌面卡片閒置，改變的是螢幕上看得到
+    /// 什麼，不是這台機器知不知道內容。腳本與其他 App 在這之後照樣讀得到，
+    /// 不必為了「讓它讀一下」把 Slate 點到最前面。
     func lock() {
         search = ""
         message = nil
-        // 常駐期間收面板只是收面板：內容留著，不然下一個 slate 指令又要驗一次，
-        // 而那正是命令列剛剛驗過的那件事。
-        guard !agentHold else {
-            phase = .locked
-            return
-        }
-        discardOpenVault()
+        phase = .locked
     }
 
-    /// What the lock button means: the unlock window closes with the vault, so
-    /// the next open needs Touch ID. This is also what ends a command line
-    /// hold — along with sleep and screen lock, which go through here too.
+    /// 收畫面，並且把內容一起丟掉，但解鎖窗留著。iPhone 進背景走這裡：
+    /// 那邊沒有 socket，沒有誰會在背景讀，留著沒有意義。
+    func lockForBackground() {
+        discardOpenVault()
+        search = ""
+        message = nil
+    }
+
+    /// 真的關上：上鎖鈕、睡眠、螢幕鎖定都走這裡。解鎖窗一起收掉，
+    /// 所以下一次無論從哪裡開，都要再驗一次身分。
     func lockNow() {
-        agentHold = false
         DeviceKey.forget()
-        lock()
+        discardOpenVault()
+        search = ""
+        message = nil
     }
 
     @discardableResult

@@ -172,15 +172,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// Runs on the agent queue and blocks it until the sheet is answered, so
     /// requests arriving meanwhile queue up behind this one and then find the
-    /// vault already open. The unlock it wins is held until the vault is
-    /// locked outright — see `VaultStore.agentHold`.
+    /// vault already open. What it wins lasts until the vault is locked
+    /// outright: hiding the panel only takes the contents off the screen.
     nonisolated private func unlockForAgent() -> Bool {
-        if SecretSnapshot.shared.isUnlocked {
-            onMainThread { self.store.holdForAgent() }
-            return true
-        }
+        if SecretSnapshot.shared.isUnlocked { return true }
 
         let started = onMainThread { () -> VaultStore.Phase in
+            // 驗證面板是這個 App 的。這個 App 沒有 Dock 圖示，沒人點過就不在最前面，
+            // 面板會開在別人正在看的視窗後面，或乾脆沒出現——腳本那頭只看到它停住。
+            // 解鎖窗還熱著就不搶焦點：那種時候根本不會有面板。
+            if !DeviceKey.isWarm { NSApp.activate(ignoringOtherApps: true) }
             self.store.unlock()
             return self.store.phase
         }
@@ -190,10 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // sensor; a cancelled sheet drops out of .unlocking well before that.
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline {
-            if SecretSnapshot.shared.isUnlocked {
-                onMainThread { self.store.holdForAgent() }
-                return true
-            }
+            if SecretSnapshot.shared.isUnlocked { return true }
             guard onMainThread({ self.store.phase }) == .unlocking else { return false }
             Thread.sleep(forTimeInterval: 0.08)
         }
