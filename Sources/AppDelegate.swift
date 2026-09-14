@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var card: DesktopCardController!
     private var hotKey: HotKey?
     private let agent = AgentServer()
+    private var agentRelock: DispatchWorkItem?
 
     /// The write half of the agent protocol. Names identify entries, because
     /// that is what a caller knows; ids never leave the app.
@@ -123,6 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return .failure("app unavailable") }
             return onMainThread { self.applyWrite(request) }
         }
+        AgentProtocol.unlockHandler = { [weak self] in
+            self?.unlockForAgent() ?? false
+        }
         agent.start()
         panel = PanelController(store: store)
         card = DesktopCardController(store: store)
@@ -159,6 +163,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.togglePanel()
             }
         }
+    }
+
+    /// Opens the vault for the command line. `slate` used to open it inside
+    /// its own process whenever this app was locked, which cost one Touch ID
+    /// per invocation — reading eight keys meant eight prompts. Asking here
+    /// instead means one unlock covers every read that follows, because the
+    /// device key stays cached for the length of the unlock window.
+    ///
+    /// Runs on the agent queue and blocks it until the sheet is answered, so
+    /// requests arriving meanwhile queue up behind this one and then find the
+    /// vault already open.
+    nonisolated private func unlockForAgent() -> Bool {
+        if SecretSnapshot.shared.isUnlocked { return true }
+
+        let started = onMainThread { () -> VaultStore.Phase in
+            self.store.unlock()
+            return self.store.phase
+        }
+        guard started == .unlocking else { return SecretSnapshot.shared.isUnlocked }
+
+        // Long enough for someone to walk back to the Mac and touch the
+        // sensor; a cancelled sheet drops out of .unlocking well before that.
+        let deadline = Date().addingTimeInterval(90)
+        while Date() < deadline {
+            if SecretSnapshot.shared.isUnlocked {
+                onMainThread { self.armAgentRelock() }
+                return true
+            }
+            guard onMainThread({ self.store.phase }) == .unlocking else { return false }
+            Thread.sleep(forTimeInterval: 0.08)
+        }
+        return false
+    }
+
+    /// An unlock the command line asked for has no window to close, so it has
+    /// to end on its own. Locking keeps the unlock window running, so a script
+    /// that comes back inside it is served without another prompt.
+    private func armAgentRelock() {
+        agentRelock?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard self.panel?.isVisible != true, self.card?.isExpanded != true else { return }
+                self.store.lock()
+            }
+        }
+        agentRelock = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + UnlockWindow.seconds, execute: work)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

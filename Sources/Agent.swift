@@ -49,7 +49,18 @@ enum AgentProtocol {
     /// the app decides in a single place what a command line may change.
     nonisolated(unsafe) static var mutateHandler: ((AgentRequest) -> AgentResponse)?
 
+    /// Opens a locked vault on request. Without it the command line has to
+    /// open the vault in its own process instead, and that costs one Touch ID
+    /// every single invocation.
+    nonisolated(unsafe) static var unlockHandler: (() -> Bool)?
+
     static func handle(_ request: AgentRequest, snapshot: SecretSnapshot) -> AgentResponse {
+        // Answered while locked, since it is the way out of being locked.
+        if request.command == "unlock" {
+            if snapshot.isUnlocked { return AgentResponse(ok: true) }
+            guard let unlockHandler else { return .failure("unlock unavailable") }
+            return unlockHandler() ? AgentResponse(ok: true) : .failure("解鎖未完成")
+        }
         guard snapshot.isUnlocked else { return .failure("locked") }
 
         switch request.command {

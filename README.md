@@ -89,8 +89,10 @@ cp -R "$HOME/Library/Developer/Slate/Slate.app" /Applications/
 
 ## 命令列
 
-`slate` 讓你自己的腳本取用保險庫。Slate 開著且已解鎖時直接取值，
-沒開就彈一次 Touch ID，同一批操作五分鐘內只驗證一次。
+`slate` 讓你自己的腳本取用保險庫。Slate 開著時一律向它取值：鎖著就請它
+解鎖一次，同一個解鎖窗內的後續指令都不再詢問，所以一次讀八把金鑰是問一次
+而不是八次。Slate 沒開才會在指令自己的行程裡開保險庫，那是每執行一次就
+驗證一次。
 
 ```bash
 export OPENAI_API_KEY=$(slate get "正式環境")
@@ -103,8 +105,9 @@ export OPENAI_API_KEY=$(slate get "正式環境")
 ln -sf "$HOME/Library/Developer/Slate/bin/slate" "$HOME/.local/bin/slate"
 ```
 
-App 解鎖時會在 `~/Library/Application Support/Slate/agent.sock` 開一個
-只有自己讀得到的 socket（權限 0600），鎖上就關閉。
+App 執行時會在 `~/Library/Application Support/Slate/agent.sock` 開一個
+只有自己讀得到的 socket（權限 0600），結束時關閉。鎖著的時候它只回答解鎖
+請求，取值一律要先解鎖。
 
 ## 自我測試
 
