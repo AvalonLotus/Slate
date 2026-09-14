@@ -383,8 +383,10 @@ final class VaultStore: ObservableObject {
         message = nil
     }
 
-    /// 真的關上：上鎖鈕、睡眠、螢幕鎖定都走這裡。解鎖窗一起收掉，
+    /// 真的關上：上鎖鈕（⌘L）與換保險庫走這裡。解鎖窗一起收掉，
     /// 所以下一次無論從哪裡開，都要再驗一次身分。
+    /// 睡眠與螢幕鎖定**不**走這裡——它們只收畫面並結束解鎖窗，
+    /// 記憶體裡已經開著的內容留著，socket 的呼叫端不會被螢幕事件切斷。
     func lockNow() {
         DeviceKey.forget()
         discardOpenVault()
@@ -534,7 +536,7 @@ final class VaultStore: ObservableObject {
             let bundle = try JSONDecoder().decode(VaultBundle.self, from: try Data(contentsOf: url))
             let descriptor = try bundle.install()
             vaults = VaultCatalogue.all
-            lock()
+            discardOpenVault()
             VaultCatalogue.select(descriptor.id)
             currentVaultID = descriptor.id
             refreshPassphraseScope()

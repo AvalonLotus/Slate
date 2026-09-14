@@ -152,9 +152,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // A sleeping or locked Mac ends the unlock window: whoever wakes it up
-        // has to prove who they are again.
+        // has to prove who they are again. It does not discard what is already
+        // open — the screen going dark is not a request to cut off the scripts
+        // and apps on this machine that are mid-conversation with the vault.
+        // Only the lock button (⌘L) really closes it.
         let seal: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated { self?.store.lockNow() }
+            MainActor.assumeIsolated {
+                DeviceKey.forget()
+                self?.store.lock()
+            }
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: seal
