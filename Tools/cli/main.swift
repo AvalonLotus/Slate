@@ -246,6 +246,24 @@ case "id":
     guard response.ok else { fail(response.error ?? "設定失敗") }
     print("已設定 ID：\(response.value ?? arguments[2])")
 
+case "delete":
+    guard arguments.count > 1 else { fail("要給名稱") }
+    guard let response = askApp(AgentRequest(command: "delete", name: arguments[1])) else {
+        fail("Slate 沒有在執行，刪除需要 App 開著")
+    }
+    guard response.ok else { fail(response.error ?? "刪除失敗") }
+    print("已刪除：\(response.value ?? arguments[1])")
+
+case "import":
+    guard arguments.count > 1 else { fail("要給檔案路徑") }
+    let path = URL(fileURLWithPath: arguments[1]).standardizedFileURL.path
+    guard FileManager.default.fileExists(atPath: path) else { fail("找不到檔案：\(path)") }
+    guard let response = askApp(AgentRequest(command: "import", detail: path)) else {
+        fail("Slate 沒有在執行，匯入需要 App 開著")
+    }
+    guard response.ok else { fail(response.error ?? "匯入失敗") }
+    print(response.value ?? "已匯入")
+
 case "-h", "--help", "help":
     print(usage)
 

@@ -401,8 +401,22 @@ final class VaultStore: ObservableObject {
         } else {
             items.append(updated)
         }
+        message = nil
         persist()
+        // persist 只在失敗時寫訊息，所以沒訊息就是真的寫出去了。按下儲存之後
+        // 畫面上必須有一句話，不然存了沒存只能靠猜。
+        if message == nil { flash("已存入「\(updated.displayName)」") }
         return updated
+    }
+
+    /// 報一句就好，過幾秒自己收掉。失敗的訊息不走這裡，那種要留在畫面上。
+    private func flash(_ text: String) {
+        message = text
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, self.message == text else { return }
+            self.message = nil
+        }
     }
 
     func delete(_ item: KeyItem) {
@@ -438,7 +452,12 @@ final class VaultStore: ObservableObject {
     }
 
     private func persist() {
-        guard let key else { return }
+        guard let key else {
+            // 以前這裡直接 return。畫面上看起來存好了，實際一個位元也沒寫出去，
+            // 而且沒有任何地方會說。
+            message = "沒有開著的保險庫，這次沒有寫進去"
+            return
+        }
         do {
             try VaultFile.save(items, key: key, events: events)
         } catch {
@@ -469,7 +488,9 @@ final class VaultStore: ObservableObject {
     /// name already exists is updated in place, so importing the same file
     /// twice corrects the entries rather than doubling them.
     func importFile(at url: URL) {
-        guard phase == .unlocked else {
+        // 看金鑰不看 phase：收起面板之後 phase 是 .locked，但保險庫還開著，
+        // 命令列那頭照樣在讀。要的是「有沒有開著」，不是「畫面在不在」。
+        guard key != nil else {
             message = "先解鎖再匯入"
             return
         }

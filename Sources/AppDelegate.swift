@@ -123,6 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return .failure("app unavailable") }
             return onMainThread { self.applyWrite(request) }
         }
+        AgentProtocol.importHandler = { [weak self] path in
+            guard let self else { return "app unavailable" }
+            return onMainThread {
+                self.store.importFile(at: URL(fileURLWithPath: path))
+                return self.store.message ?? "已匯入"
+            }
+        }
         AgentProtocol.unlockHandler = { [weak self] in
             self?.unlockForAgent() ?? false
         }
