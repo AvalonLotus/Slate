@@ -205,6 +205,11 @@ enum DeviceKey {
         return key
     }
 
+    /// True while the window still holds the key, which is the same as saying
+    /// the next unlock costs no sheet. Lets the caller decide whether it has
+    /// to drag the app in front of the person first.
+    static var isWarm: Bool { unexpired() != nil }
+
     /// Closes the window early: the next unlock scans again.
     static func forget() {
         mutex.lock()

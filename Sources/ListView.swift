@@ -17,6 +17,19 @@ struct VaultListView: View {
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.bottom, 10)
 
+            // 存檔與匯入的結果以前只寫進 store.message，而解鎖之後沒有任何
+            // 地方在顯示它：寫入失敗會安靜地消失。
+            if let message = store.message {
+                Text(message)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Color(red: 0.95, green: 0.35, blue: 0.35))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+            }
+
             if store.items.isEmpty {
                 emptyState
             } else if store.filtered.isEmpty {
@@ -33,6 +46,7 @@ struct VaultListView: View {
                 }
             }
         }
+        .animation(Motion.snappy, value: store.message)
     }
 
     private var header: some View {

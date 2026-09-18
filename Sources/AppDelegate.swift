@@ -96,6 +96,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return .failure("app unavailable") }
             return onMainThread { self.applyWrite(request) }
         }
+        AgentProtocol.importHandler = { [weak self] path in
+            guard let self else { return "app unavailable" }
+            return onMainThread {
+                self.store.importFile(at: URL(fileURLWithPath: path))
+                return self.store.message ?? "已匯入"
+            }
+        }
+        AgentProtocol.unlockHandler = { [weak self] in
+            self?.unlockForAgent() ?? false
+        }
         agent.start()
         panel = PanelController(store: store)
         card = DesktopCardController(store: store)
@@ -115,9 +125,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // A sleeping or locked Mac ends the unlock window: whoever wakes it up
-        // has to prove who they are again.
+        // has to prove who they are again. It does not discard what is already
+        // open — the screen going dark is not a request to cut off the scripts
+        // and apps on this machine that are mid-conversation with the vault.
+        // Only the lock button (⌘L) really closes it.
         let seal: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated { self?.store.lockNow() }
+            MainActor.assumeIsolated {
+                DeviceKey.forget()
+                self?.store.lock()
+            }
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: seal
@@ -132,6 +148,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.togglePanel()
             }
         }
+    }
+
+    /// Opens the vault for the command line. `slate` used to open it inside
+    /// its own process whenever this app was locked, which cost one Touch ID
+    /// per invocation — reading eight keys meant eight prompts. Asking here
+    /// instead means one unlock covers every read that follows, because the
+    /// device key stays cached for the length of the unlock window.
+    ///
+    /// Runs on the agent queue and blocks it until the sheet is answered, so
+    /// requests arriving meanwhile queue up behind this one and then find the
+    /// vault already open. What it wins lasts until the vault is locked
+    /// outright: hiding the panel only takes the contents off the screen.
+    nonisolated private func unlockForAgent() -> Bool {
+        if SecretSnapshot.shared.isUnlocked { return true }
+
+        let started = onMainThread { () -> VaultStore.Phase in
+            // 驗證面板是這個 App 的。這個 App 沒有 Dock 圖示，沒人點過就不在最前面，
+            // 面板會開在別人正在看的視窗後面，或乾脆沒出現——腳本那頭只看到它停住。
+            // 解鎖窗還熱著就不搶焦點：那種時候根本不會有面板。
+            if !DeviceKey.isWarm { NSApp.activate(ignoringOtherApps: true) }
+            self.store.unlock()
+            return self.store.phase
+        }
+        guard started == .unlocking else { return SecretSnapshot.shared.isUnlocked }
+
+        // Long enough for someone to walk back to the Mac and touch the
+        // sensor; a cancelled sheet drops out of .unlocking well before that.
+        let deadline = Date().addingTimeInterval(90)
+        while Date() < deadline {
+            if SecretSnapshot.shared.isUnlocked { return true }
+            guard onMainThread({ self.store.phase }) == .unlocking else { return false }
+            Thread.sleep(forTimeInterval: 0.08)
+        }
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

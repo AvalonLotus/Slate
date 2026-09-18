@@ -123,6 +123,9 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         guard panel.isVisible else { return }
+        // 明確收起面板時，開著的編輯畫面也跟著消失，它的 onDisappear 不一定
+        // 趕得上。旗標留著會讓面板從此不再自動收起。
+        modalDialogActive = false
         NotificationCenter.default.post(name: .keyVaultPanelWillHide, object: nil)
         withAnimation(Motion.snappy) { state.presented = false }
 

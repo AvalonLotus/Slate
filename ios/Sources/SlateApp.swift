@@ -13,7 +13,7 @@ struct SlateApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             // Anything but active means the vault should not stay open.
-            if phase != .active { store.lock() }
+            if phase != .active { store.lockForBackground() }
         }
     }
 }

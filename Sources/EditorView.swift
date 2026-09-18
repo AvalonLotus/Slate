@@ -56,7 +56,14 @@ struct EditorView: View {
                 .padding(.bottom, 18)
             }
         }
-        .onAppear { if isNew { nameFocused = true } }
+        // 面板平常一失焦就收起來。編輯到一半切去瀏覽器複製金鑰，正是最容易
+        // 失焦的時候，而收起來等於把還沒存的內容丟掉——所以編輯期間比照對話框，
+        // 面板留在原地等人回來。
+        .onAppear {
+            NotificationCenter.default.post(name: .slateModalBegan, object: nil)
+            if isNew { nameFocused = true }
+        }
+        .onDisappear { NotificationCenter.default.post(name: .slateModalEnded, object: nil) }
     }
 
     private var header: some View {

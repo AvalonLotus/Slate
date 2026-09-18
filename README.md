@@ -33,8 +33,9 @@ UserDefaults，重開還在原位。
   5 / 10 / 15 分鐘，預設 5）。這段時間內切換保險庫、重新打開面板都不再要求
   指紋——每個保險庫的信封本來就都由同一把裝置金鑰包住。按下鎖頭或 `⌘L`、
   Mac 睡著、螢幕上鎖，這段時間立刻結束，下次要重新驗證。
-- 面板關閉即清空記憶體中的明文與保險庫金鑰；留下的只有裝置金鑰，且只留到
-  免驗證時間結束為止。
+- 收起面板只把內容從螢幕上收走，不清記憶體——螢幕暗掉不代表你要切斷這台
+  機器上正在跟保險庫對話的腳本與應用。真的清空記憶體中的明文與保險庫金鑰的
+  只有鎖頭鈕 `⌘L` 與換保險庫。
 - 複製到剪貼簿的金鑰標記為 `org.nspasteboard.ConcealedType`，45 秒後自動清空。
 
 ## 操作
@@ -89,8 +90,12 @@ cp -R "$HOME/Library/Developer/Slate/Slate.app" /Applications/
 
 ## 命令列
 
-`slate` 讓你自己的腳本取用保險庫。Slate 開著且已解鎖時直接取值，
-沒開就彈一次 Touch ID，同一批操作五分鐘內只驗證一次。
+`slate` 讓你自己的腳本取用保險庫。Slate 開著時一律向它取值：鎖著就請它
+解鎖一次，驗證面板會自己跑到最前面，之後的指令都不再詢問，所以一次讀八把
+金鑰是問一次而不是八次，而且不必把 Slate 切到前景。解開過就是解開了，
+收起面板只是把內容從螢幕上收走；結束它的是上鎖鈕 `⌘L`、換保險庫與結束
+App。睡眠與螢幕鎖定只結束免驗證時間並收起畫面，記憶體裡開著的內容留著，
+腳本照樣讀得到。Slate 沒開才會在指令自己的行程裡開保險庫，那是每執行一次就驗證一次。
 
 ```bash
 export OPENAI_API_KEY=$(slate get "正式環境")
@@ -104,8 +109,9 @@ export OPENAI_API_KEY=$(slate get "正式環境")
 ln -sf "$HOME/Library/Developer/Slate/bin/slate" "$HOME/.local/bin/slate"
 ```
 
-App 解鎖時會在 `~/Library/Application Support/Slate/agent.sock` 開一個
-只有自己讀得到的 socket（權限 0600），鎖上就關閉。
+App 執行時會在 `~/Library/Application Support/Slate/agent.sock` 開一個
+只有自己讀得到的 socket（權限 0600），結束時關閉。鎖著的時候它只回答解鎖
+請求，取值一律要先解鎖。
 
 ## 自我測試
 

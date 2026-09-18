@@ -171,6 +171,9 @@ final class DesktopCardController: NSObject, NSWindowDelegate {
     private var effectView: NSVisualEffectView!
     private var cancellables: Set<AnyCancellable> = []
     private var autoLockWork: DispatchWorkItem?
+    /// 閒置計時看的是 store 有沒有動靜，而打字只動 View 自己的 @State。
+    /// 編輯畫面開著的時候它會數到底然後上鎖，把還沒存的內容一起收掉。
+    private var editorOpen = false
     private var snapWork: DispatchWorkItem?
     private var isDragging = false
     private let cardState = CardState()
@@ -265,10 +268,28 @@ final class DesktopCardController: NSObject, NSWindowDelegate {
                 self.scheduleAutoLock()
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.addObserver(
+            forName: .slateModalBegan, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.editorOpen = true
+                self?.autoLockWork?.cancel()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .slateModalEnded, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.editorOpen = false
+                self?.scheduleAutoLock()
+            }
+        }
     }
 
     private func scheduleAutoLock() {
         autoLockWork?.cancel()
+        guard !editorOpen else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.store.phase == .unlocked else { return }
             withAnimation(Motion.snappy) { self.store.lock() }

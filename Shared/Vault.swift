@@ -311,8 +311,8 @@ final class VaultStore: ObservableObject {
     }
 
     private func failUnlock(_ error: Error) {
-        key = nil
-        items = []
+        // 已經開著的內容留著：驗證沒過是「這次沒證明你是誰」，不是「剛才那次不算」。
+        // 真要收掉是 lockNow 的事。
         // deviceNotEnrolled 是「這個保險庫沒有這台的鑰匙」，不是「你是誰沒證明」。
         // 退回 .locked 會要求再驗證一次身分，而再驗證幾次也開不了這個保險庫。
         if case VaultError.deviceNotEnrolled = error {
@@ -337,7 +337,8 @@ final class VaultStore: ObservableObject {
     /// must never survive into the next one.
     func switchVault(to id: String) {
         guard id != currentVaultID else { return }
-        lock()
+        discardOpenVault()
+        search = ""
         VaultCatalogue.select(id)
         currentVaultID = id
         message = nil
@@ -376,23 +377,47 @@ final class VaultStore: ObservableObject {
         }
     }
 
-    /// Clears the open vault but leaves the unlock window running, so hiding
-    /// the panel or switching companies does not cost another scan.
-    func lock() {
+    /// 把開著的保險庫整個丟掉：金鑰、內容，以及 socket 讀的那份副本。
+    ///
+    /// 清空的順序不能反。`items` 的 didSet 會把值推進 snapshot，而推進去這個動作
+    /// 本身就代表「開著」——先 clear 再清 items，等於清完又被標記成開著，socket
+    /// 那頭看到的會是一個空的、開著的保險庫：每一筆都回「找不到」，而不是「鎖著」。
+    private func discardOpenVault() {
         key = nil
-        SecretSnapshot.shared.clear()
         items = []
         events = []
+        SecretSnapshot.shared.clear()
+        phase = .locked
+    }
+
+    /// 收起畫面，如此而已。
+    ///
+    /// 解開過的東西就是解開了：面板收起來、桌面卡片閒置，改變的是螢幕上看得到
+    /// 什麼，不是這台機器知不知道內容。腳本與其他 App 在這之後照樣讀得到，
+    /// 不必為了「讓它讀一下」把 Slate 點到最前面。
+    func lock() {
         search = ""
         message = nil
         phase = .locked
     }
 
-    /// What the lock button means: the unlock window closes with the vault, so
-    /// the next open needs Touch ID.
+    /// 收畫面，並且把內容一起丟掉，但解鎖窗留著。iPhone 進背景走這裡：
+    /// 那邊沒有 socket，沒有誰會在背景讀，留著沒有意義。
+    func lockForBackground() {
+        discardOpenVault()
+        search = ""
+        message = nil
+    }
+
+    /// 真的關上：上鎖鈕（⌘L）與換保險庫走這裡。解鎖窗一起收掉，
+    /// 所以下一次無論從哪裡開，都要再驗一次身分。
+    /// 睡眠與螢幕鎖定**不**走這裡——它們只收畫面並結束解鎖窗，
+    /// 記憶體裡已經開著的內容留著，socket 的呼叫端不會被螢幕事件切斷。
     func lockNow() {
         DeviceKey.forget()
-        lock()
+        discardOpenVault()
+        search = ""
+        message = nil
     }
 
     @discardableResult
@@ -404,8 +429,22 @@ final class VaultStore: ObservableObject {
         } else {
             items.append(updated)
         }
+        message = nil
         persist()
+        // persist 只在失敗時寫訊息，所以沒訊息就是真的寫出去了。按下儲存之後
+        // 畫面上必須有一句話，不然存了沒存只能靠猜。
+        if message == nil { flash("已存入「\(updated.displayName)」") }
         return updated
+    }
+
+    /// 報一句就好，過幾秒自己收掉。失敗的訊息不走這裡，那種要留在畫面上。
+    private func flash(_ text: String) {
+        message = text
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, self.message == text else { return }
+            self.message = nil
+        }
     }
 
     func delete(_ item: KeyItem) {
@@ -441,7 +480,12 @@ final class VaultStore: ObservableObject {
     }
 
     private func persist() {
-        guard let key else { return }
+        guard let key else {
+            // 以前這裡直接 return。畫面上看起來存好了，實際一個位元也沒寫出去，
+            // 而且沒有任何地方會說。
+            message = "沒有開著的保險庫，這次沒有寫進去"
+            return
+        }
         do {
             try VaultFile.save(items, key: key, events: events)
         } catch {
@@ -472,7 +516,9 @@ final class VaultStore: ObservableObject {
     /// name already exists is updated in place, so importing the same file
     /// twice corrects the entries rather than doubling them.
     func importFile(at url: URL) {
-        guard phase == .unlocked else {
+        // 看金鑰不看 phase：收起面板之後 phase 是 .locked，但保險庫還開著，
+        // 命令列那頭照樣在讀。要的是「有沒有開著」，不是「畫面在不在」。
+        guard key != nil else {
             message = "先解鎖再匯入"
             return
         }
@@ -516,7 +562,7 @@ final class VaultStore: ObservableObject {
             let bundle = try JSONDecoder().decode(VaultBundle.self, from: try Data(contentsOf: url))
             let descriptor = try bundle.install()
             vaults = VaultCatalogue.all
-            lock()
+            discardOpenVault()
             VaultCatalogue.select(descriptor.id)
             currentVaultID = descriptor.id
             refreshPassphraseScope()
