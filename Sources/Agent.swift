@@ -12,6 +12,7 @@ struct AgentRequest: Codable {
     var kind: String?
     var newName: String?
     var account: String?
+    var url: String?
 }
 
 struct AgentResponse: Codable {
@@ -25,6 +26,7 @@ struct AgentResponse: Codable {
         var name: String
         var username: String
         var kind: String
+        var url: String
     }
 
     static func failure(_ message: String) -> AgentResponse {
@@ -45,8 +47,8 @@ enum AgentProtocol {
     /// Removing an entry outright, for tidying up after an import.
     nonisolated(unsafe) static var deleteHandler: ((String) -> Bool)?
 
-    /// Everything that writes: add, set, rename, kind, id. One handler, so
-    /// the app decides in a single place what a command line may change.
+    /// Everything that writes: add, set, rename, kind, id, url. One handler,
+    /// so the app decides in a single place what a command line may change.
     nonisolated(unsafe) static var mutateHandler: ((AgentRequest) -> AgentResponse)?
 
     static func handle(_ request: AgentRequest, snapshot: SecretSnapshot) -> AgentResponse {
@@ -60,7 +62,8 @@ enum AgentProtocol {
                 AgentResponse.Entry(
                     name: $0.displayName,
                     username: $0.username,
-                    kind: $0.kind.rawValue
+                    kind: $0.kind.rawValue,
+                    url: $0.url
                 )
             }
             return AgentResponse(ok: true, items: entries)
@@ -75,7 +78,7 @@ enum AgentProtocol {
             return deleteHandler(item.displayName)
                 ? AgentResponse(ok: true, value: item.displayName)
                 : .failure("delete failed")
-        case "add", "set", "rename", "kind", "id":
+        case "add", "set", "rename", "kind", "id", "url":
             guard let mutateHandler else { return .failure("write unavailable") }
             return mutateHandler(request)
         case "import":

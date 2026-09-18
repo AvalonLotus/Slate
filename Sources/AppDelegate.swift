@@ -68,12 +68,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = store.save(item)
             return AgentResponse(ok: true, value: item.username)
 
+        case "url":
+            guard var item = find(name) else { return .failure("not found: \(name)") }
+            item.url = request.url ?? ""
+            _ = store.save(item)
+            return AgentResponse(ok: true, value: item.url)
+
         default:
             return .failure("unknown write: \(request.command)")
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installEditMenu()
         takeOverFromOtherInstances()
         AgentProtocol.deleteHandler = { [weak self] name in
             guard let self else { return false }
@@ -153,6 +160,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func togglePanel() {
         panel.toggle(relativeTo: statusItem.button)
+    }
+
+    /// The only dispatch point for ⌘V, ⌘A, ⌘C and ⌘X is a main menu key
+    /// equivalent, so an app that never assigns one leaves its text fields
+    /// unable to paste or select all. Items keep a nil target and reach the
+    /// field editor through the responder chain.
+    private func installEditMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "結束 \(Brand.name)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appItem.submenu = appMenu
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "編輯")
+        edit.addItem(withTitle: "還原", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "剪下", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "拷貝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "貼上", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "全選", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+
+        NSApp.mainMenu = main
     }
 
     private func showMenu() {

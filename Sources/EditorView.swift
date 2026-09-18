@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct EditorView: View {
@@ -10,6 +11,7 @@ struct EditorView: View {
     @State private var copied = false
     @State private var confirmingDelete = false
     @FocusState private var nameFocused: Bool
+    @FocusState private var secretFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,10 +38,17 @@ struct EditorView: View {
                         }
                     }
 
+                    urlField
+
                     secretField
 
                     if !isNew {
                         metadata
+                    }
+
+                    saveButton
+
+                    if !isNew {
                         deleteButton
                     }
                 }
@@ -76,15 +85,6 @@ struct EditorView: View {
             }
 
             Spacer(minLength: 0)
-
-            Button("儲存") {
-                store.save(draft)
-                onClose()
-            }
-            .buttonStyle(CapsuleButtonStyle())
-            .disabled(draft.secret.isEmpty && draft.name.isEmpty)
-            .opacity(draft.secret.isEmpty && draft.name.isEmpty ? 0.45 : 1)
-            .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, Metrics.gutter)
         .padding(.top, 16)
@@ -114,6 +114,25 @@ struct EditorView: View {
                     .foregroundStyle(draft.kind == kind ? .white : .secondary)
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var urlField: some View {
+        field(title: "網址", systemImage: "link") {
+            HStack(spacing: 8) {
+                TextField("https://…", text: $draft.url)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+
+                Button {
+                    store.open(draft)
+                } label: {
+                    Image(systemName: "arrow.up.right")
+                }
+                .buttonStyle(GlassButtonStyle(size: 24))
+                .disabled(draft.openableURL == nil)
+                .help("在瀏覽器開啟")
             }
         }
     }
@@ -150,6 +169,16 @@ struct EditorView: View {
                 .buttonStyle(GlassButtonStyle(size: 24))
                 .disabled(draft.secret.isEmpty)
                 .help("複製（45 秒後自動清空剪貼簿）")
+
+                Button {
+                    guard let text = NSPasteboard.general.string(forType: .string),
+                          !text.isEmpty else { return }
+                    draft.secret = text
+                } label: {
+                    Image(systemName: "arrow.down.doc.fill")
+                }
+                .buttonStyle(GlassButtonStyle(size: 24))
+                .help("貼上，取代整個值")
             }
             .foregroundStyle(.secondary)
 
@@ -166,10 +195,42 @@ struct EditorView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .cardBackground(radius: 12)
+            .focused($secretFocused)
+            // Taking focus selects the whole value: replacing a key outright is
+            // what this field is opened for.
+            .onChange(of: secretFocused) { _, focused in
+                guard focused else { return }
+                DispatchQueue.main.async {
+                    _ = NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                }
+            }
+            // Revealing swaps one field for the other, and focus does not
+            // cross that swap.
+            .onChange(of: revealed) { _, _ in
+                DispatchQueue.main.async { secretFocused = true }
+            }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 12)
         .cardBackground()
+    }
+
+    /// The only save in the editor, so it carries the keyboard path too.
+    private var saveButton: some View {
+        Button(action: save) {
+            Text("儲存")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CapsuleButtonStyle(filled: false))
+        .disabled(draft.secret.isEmpty && draft.name.isEmpty)
+        .opacity(draft.secret.isEmpty && draft.name.isEmpty ? 0.45 : 1)
+        .keyboardShortcut("s", modifiers: .command)
+        .padding(.top, 4)
+    }
+
+    private func save() {
+        store.save(draft)
+        onClose()
     }
 
     private func field<Content: View>(
@@ -221,11 +282,8 @@ struct EditorView: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "trash.fill")
-                Text(confirmingDelete ? "再按一次確認刪除" : "刪除這筆")
-            }
-            .frame(maxWidth: .infinity)
+            Text(confirmingDelete ? "再按一次確認" : "刪除")
+                .frame(maxWidth: .infinity)
         }
         .buttonStyle(CapsuleButtonStyle(tint: Color(red: 0.95, green: 0.33, blue: 0.33), filled: confirmingDelete))
         .padding(.top, 4)

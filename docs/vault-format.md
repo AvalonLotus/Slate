@@ -56,6 +56,7 @@ Additional authenticated data 不使用，三端一律留空。
   "provider": "OpenAI",
   "username": "",
   "secret": "EXAMPLE-…",
+  "url": "https://platform.example.com/api-keys",
   "note": "只開 charges 權限",
   "createdAt": "2026-08-01T09:12:33Z",
   "updatedAt": "2026-08-27T14:18:00Z",
@@ -67,6 +68,11 @@ Additional authenticated data 不使用，三端一律留空。
 
 `kind` 目前只有 `apiKey` 與 `login` 兩個值。讀到不認識的值時保留原字串、
 以 `apiKey` 的樣子呈現，不得丟棄該筆——這條規則讓舊版客戶端不會吃掉新版資料。
+
+`url` 是申請這把金鑰的頁面，明文儲存，預設空字串。
+
+`url` 只接受 `http` 與 `https` 兩種 scheme。字串不含 `://` 時讀為 `https`。
+其餘 scheme 保留原字串，停用開啟入口。
 
 所有時間一律 ISO 8601、UTC、秒為單位、結尾 `Z`。不使用平台預設的時間編碼
 （Swift 的 reference date、Java 的 epoch millis 都不行），因為三端必須逐字節一致。

@@ -48,7 +48,7 @@ UserDefaults，重開還在原位。
 | 立即上鎖 | `⌘L` 或鑰匙列的鎖頭（同時結束免驗證時間） |
 | 免驗證時間 | 設定 → 5 / 10 / 15 分鐘 |
 | 開機時啟動 | 設定 → 開機時啟動 → 開啟 |
-| 儲存 | `⌘Return` |
+| 儲存 | `⌘S` |
 | 返回 / 收起 | `Esc` |
 | 結束程式 | 右鍵點選單列圖示 → 結束 |
 
@@ -97,6 +97,7 @@ export OPENAI_API_KEY=$(slate get "正式環境")
 ```
 
 `slate list` 列出條目，`slate user <名稱>` 取帳號，`slate json` 給程式讀。
+`slate url <名稱> <網址>` 設定網址。
 建置後執行檔在 `~/Library/Developer/Slate/bin/slate`，放進 PATH：
 
 ```bash

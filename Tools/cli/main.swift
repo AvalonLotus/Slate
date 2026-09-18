@@ -20,6 +20,7 @@ let usage = """
   slate rename <舊名> <新名>  改名
   slate kind <名稱> <型別>    改型別
   slate id <名稱> <ID>        設定應用 / 頻道 ID
+  slate url <名稱> <網址>     設定網址
   slate delete <名稱>         刪除該筆
   slate import <檔案>         匯入 csv 或 txt
 
@@ -133,10 +134,15 @@ case "list":
 case "json":
     let entries: [[String: String]]
     if let response = askAgent(AgentRequest(command: "list")), response.ok, let items = response.items {
-        entries = items.map { ["name": $0.name, "username": $0.username, "kind": $0.kind] }
+        entries = items.map {
+            ["name": $0.name, "username": $0.username, "kind": $0.kind, "url": $0.url]
+        }
     } else {
         entries = openLocally().map {
-            ["name": $0.displayName, "username": $0.username, "kind": $0.kind.rawValue]
+            [
+                "name": $0.displayName, "username": $0.username,
+                "kind": $0.kind.rawValue, "url": $0.url,
+            ]
         }
     }
     let data = try JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys])
@@ -231,6 +237,14 @@ case "id":
     )) else { fail("Slate 沒有在執行，寫入需要 App 開著且已解鎖") }
     guard response.ok else { fail(response.error ?? "設定失敗") }
     print("已設定 ID：\(response.value ?? arguments[2])")
+
+case "url":
+    guard arguments.count > 2 else { fail("要給名稱和網址") }
+    guard let response = askAgent(AgentRequest(
+        command: "url", name: arguments[1], url: arguments[2]
+    )) else { fail("Slate 沒有在執行，寫入需要 App 開著且已解鎖") }
+    guard response.ok else { fail(response.error ?? "設定失敗") }
+    print("已設定網址：\(response.value ?? arguments[2])")
 
 case "-h", "--help", "help":
     print(usage)

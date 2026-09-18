@@ -88,6 +88,7 @@ struct KeyItem: Identifiable, Codable, Equatable {
     var name: String = ""
     var username: String = ""
     var secret: String = ""
+    var url: String = ""
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     var deletedAt: Date?
@@ -105,12 +106,34 @@ struct KeyItem: Identifiable, Codable, Equatable {
         }
     }
 
+    /// The stored address as something safe to hand to the browser. A value
+    /// with no scheme is read as https; anything that is not http or https
+    /// resolves to nil and leaves the stored string as it was typed.
+    var openableURL: URL? {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let guessed = !trimmed.contains("://")
+        let candidate = guessed ? "https://" + trimmed : trimmed
+        guard let parsed = URL(string: candidate),
+              let scheme = parsed.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = parsed.host, !host.isEmpty,
+              // A guessed scheme needs a host that reads as one. Any bare word
+              // is a valid hostname otherwise, punycode included.
+              !guessed || host.contains("."),
+              // A host that reads as one site while resolving to another.
+              parsed.user == nil, parsed.password == nil
+        else { return nil }
+        return parsed
+    }
+
     init(
         id: UUID = UUID(),
         kind: ItemKind = .apiKey,
         name: String = "",
         username: String = "",
         secret: String = "",
+        url: String = "",
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -120,6 +143,7 @@ struct KeyItem: Identifiable, Codable, Equatable {
         self.name = name
         self.username = username
         self.secret = secret
+        self.url = url
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -136,6 +160,7 @@ struct KeyItem: Identifiable, Codable, Equatable {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         secret = try container.decodeIfPresent(String.self, forKey: .secret) ?? ""
+        url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -224,6 +249,7 @@ final class VaultStore: ObservableObject {
         return sorted.filter {
             $0.name.lowercased().contains(query)
                 || $0.username.lowercased().contains(query)
+                || $0.url.lowercased().contains(query)
         }
     }
 
@@ -578,6 +604,17 @@ final class VaultStore: ObservableObject {
             try? VaultKeyStore.save(envelope, vaultID: vault.id)
         }
         refreshPassphraseScope()
+    }
+
+    /// Opens the item's address in the default browser. A value that does
+    /// not resolve to an http or https address opens nothing.
+    func open(_ item: KeyItem) {
+        guard let url = item.openableURL else { return }
+        #if canImport(AppKit)
+        NSWorkspace.shared.open(url)
+        #else
+        UIApplication.shared.open(url)
+        #endif
     }
 
     /// Copies a secret and wipes it from the pasteboard after a short window.

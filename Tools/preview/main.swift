@@ -43,7 +43,7 @@ let samples: [KeyItem] = [
     KeyItem(kind: .login, name: "公司信箱", username: "someone@example.com", secret: "correct-horse-battery"),
     KeyItem(kind: .token, name: "粉專權杖", username: "1000000000000000", secret: "EXAMPLE-token-value"),
     KeyItem(kind: .identifier, name: "頻道 ID", secret: "2000000000"),
-    KeyItem(name: "正式環境", secret: "EXAMPLE-api-key-0001"),
+    KeyItem(name: "正式環境", secret: "EXAMPLE-api-key-0001", url: "https://platform.example.com/api-keys"),
     KeyItem(name: "模型服務", secret: "EXAMPLE-api-key-0002"),
     KeyItem(name: "付款串接", secret: "EXAMPLE-api-key-0003"),
     KeyItem(name: "物件儲存", secret: "EXAMPLE-api-key-0004"),
