@@ -25,7 +25,6 @@ enum KeyProbe {
     /// Matched on the entry name, which is what the owner called it, falling
     /// back to the shape of the value for tokens that announce themselves.
     private static func request(name: String, secret: String) -> URLRequest? {
-        let key = name.lowercased()
         let value = secret.trimmingCharacters(in: .whitespacesAndNewlines)
 
         func get(_ string: String, _ headers: [String: String] = [:]) -> URLRequest? {
@@ -40,50 +39,42 @@ enum KeyProbe {
             withAllowedCharacters: .urlQueryAllowed
         ) ?? value
 
-        if key.contains("openai") || value.hasPrefix("sk-proj-") || value.hasPrefix("sk-svcacct") {
+        switch Provider.match(name: name, value: secret) {
+        case .openai:
             return get("https://api.openai.com/v1/models", ["Authorization": "Bearer \(value)"])
-        }
-        if key.contains("anthropic") || value.hasPrefix("sk-ant-") {
+        case .anthropic:
             return get("https://api.anthropic.com/v1/models", [
-                "x-api-key": value, "anthropic-version": "2023-06-01",
+                "x-api-key": value,
+                "anthropic-version": "2023-06-01",
             ])
-        }
-        if key.contains("gemini") || key.contains("google ai") {
+        case .gemini:
             return get("https://generativelanguage.googleapis.com/v1beta/models?key=\(escaped)")
-        }
-        if key.contains("github") || value.hasPrefix("ghp_") || value.hasPrefix("github_pat_") {
+        case .github:
             return get("https://api.github.com/user", ["Authorization": "Bearer \(value)"])
-        }
-        if key.contains("meta") || value.hasPrefix("EAA") {
+        case .meta:
             let token = value.components(separatedBy: .newlines)
                 .first(where: { $0.hasPrefix("EAA") }) ?? value
             let safe = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
             return get("https://graph.facebook.com/v21.0/me?access_token=\(safe)")
-        }
-        if key.contains("unsplash") {
+        case .unsplash:
             return get("https://api.unsplash.com/photos?per_page=1", [
                 "Authorization": "Client-ID \(value)",
             ])
-        }
-        if key.contains("pexels") {
+        case .pexels:
             return get("https://api.pexels.com/v1/curated?per_page=1", ["Authorization": value])
-        }
-        if key.contains("pixabay") {
+        case .pixabay:
             return get("https://pixabay.com/api/?key=\(escaped)&q=sky&per_page=3")
-        }
-        if key.contains("gnews") {
+        case .gnews:
             return get("https://gnews.io/api/v4/top-headlines?max=1&token=\(escaped)")
-        }
-        if key.contains("news api") || key == "news api" || key.contains("newsapi") {
+        case .newsapi:
             return get("https://newsapi.org/v2/top-headlines?country=us&pageSize=1&apiKey=\(escaped)")
-        }
-        if key.contains("fred") {
+        case .fred:
             return get("https://api.stlouisfed.org/fred/series?series_id=GNPCA&file_type=json&api_key=\(escaped)")
-        }
-        if key.contains("bea") {
+        case .bea:
             return get("https://apps.bea.gov/api/data?method=GETDATASETLIST&ResultFormat=JSON&UserID=\(escaped)")
+        case nil:
+            return nil
         }
-        return nil
     }
 
     static func check(name: String, kind: String, secret: String) async -> Verdict {

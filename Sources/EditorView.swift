@@ -62,6 +62,9 @@ struct EditorView: View {
             if isNew { nameFocused = true }
         }
         .onDisappear { NotificationCenter.default.post(name: .slateModalEnded, object: nil) }
+        // 貼上金鑰或打好名稱之後，認得出是哪一家就把管理頁填進網址欄。
+        .onChange(of: draft.secret) { _, _ in suggestURL() }
+        .onChange(of: draft.name) { _, _ in suggestURL() }
     }
 
     private var header: some View {
@@ -209,6 +212,14 @@ struct EditorView: View {
     private func save() {
         store.save(draft)
         onClose()
+    }
+
+    /// 只填空白的網址欄。你自己打過的一律不動，認不出來的也不動。
+    private func suggestURL() {
+        guard draft.url.isEmpty,
+              let provider = Provider.match(name: draft.name, value: draft.secret)
+        else { return }
+        draft.url = provider.consoleURL
     }
 
     /// 固定那四欄裝不下的東西。名稱自己打，值要不要遮自己決定。
