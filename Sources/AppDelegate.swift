@@ -62,6 +62,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = store.save(item)
             return AgentResponse(ok: true, value: kind.label)
 
+        case "field":
+            guard let wanted = request.field, !wanted.isEmpty else { return .failure("missing field") }
+            guard let value = request.value, !value.isEmpty else { return .failure("missing value") }
+            guard var item = find(name) else { return .failure("not found: \(name)") }
+            if let index = item.fields.firstIndex(where: {
+                $0.name.lowercased() == wanted.lowercased()
+            }) {
+                // 已經有這一欄就只換值，遮不遮維持原樣。
+                item.fields[index].value = value
+            } else {
+                item.fields.append(CustomField(name: wanted, value: value))
+            }
+            _ = store.save(item)
+            return AgentResponse(ok: true, value: wanted)
+
         case "id":
             guard var item = find(name) else { return .failure("not found: \(name)") }
             item.username = request.account ?? ""
@@ -106,7 +121,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentProtocol.unlockHandler = { [weak self] in
             self?.unlockForAgent() ?? false
         }
-        agent.start()
+        // 保險庫開好之前不開 socket。遷移期間換金鑰，這時候讓任何人進來開一次
+        // 保險庫，舊金鑰就會卡進 DeviceKey 的快取，換完之後全部打不開。
+        // 舊格式的安全區金鑰還在的話先換掉，那是最後一次需要你驗證。
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if EnclaveFormat.needsMigration {
+                onMainThread { NSApp.activate(ignoringOtherApps: true) }
+                do {
+                    try EnclaveMigration.run()
+                } catch {
+                    let reason = (error as? LocalizedError)?.errorDescription
+                        ?? error.localizedDescription
+                    onMainThread { self?.store.message = "改成免驗證讀取沒有完成：\(reason)" }
+                }
+            }
+            onMainThread {
+                self?.store.openVault()
+                self?.agent.start()
+            }
+        }
         panel = PanelController(store: store)
         card = DesktopCardController(store: store)
         panel.lockOnHide = { [weak self] in !(self?.card.isExpanded ?? false) }
@@ -130,10 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and apps on this machine that are mid-conversation with the vault.
         // Only the lock button (⌘L) really closes it.
         let seal: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated {
-                DeviceKey.forget()
-                self?.store.lock()
-            }
+            MainActor.assumeIsolated { self?.store.lock() }
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: seal
@@ -163,23 +193,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated private func unlockForAgent() -> Bool {
         if SecretSnapshot.shared.isUnlocked { return true }
 
-        let started = onMainThread { () -> VaultStore.Phase in
-            // 驗證面板是這個 App 的。這個 App 沒有 Dock 圖示，沒人點過就不在最前面，
-            // 面板會開在別人正在看的視窗後面，或乾脆沒出現——腳本那頭只看到它停住。
-            // 解鎖窗還熱著就不搶焦點：那種時候根本不會有面板。
-            if !DeviceKey.isWarm { NSApp.activate(ignoringOtherApps: true) }
-            self.store.unlock()
-            return self.store.phase
-        }
-        guard started == .unlocking else { return SecretSnapshot.shared.isUnlocked }
+        // 沒有面板可跳，也不該跳：這條路上沒有人，只有腳本。開檔案而已。
+        onMainThread { self.store.openVault() }
 
-        // Long enough for someone to walk back to the Mac and touch the
-        // sensor; a cancelled sheet drops out of .unlocking well before that.
-        let deadline = Date().addingTimeInterval(90)
+        // 這條路跑在 socket 自己的佇列上：空等會把後面每一個請求一起卡住。
+        let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
             if SecretSnapshot.shared.isUnlocked { return true }
-            guard onMainThread({ self.store.phase }) == .unlocking else { return false }
-            Thread.sleep(forTimeInterval: 0.08)
+            if onMainThread({ self.store.openFailed }) { return false }
+            Thread.sleep(forTimeInterval: 0.05)
         }
         return false
     }

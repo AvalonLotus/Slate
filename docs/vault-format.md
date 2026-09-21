@@ -58,6 +58,10 @@ Additional authenticated data 不使用，三端一律留空。
   "secret": "EXAMPLE-…",
   "url": "https://platform.example.com/api-keys",
   "note": "只開 charges 權限",
+  "fields": [
+    { "id": "1D3E…", "name": "到期日", "value": "2027-01-31", "isSecret": false },
+    { "id": "7A02…", "name": "Webhook Secret", "value": "whsec_…", "isSecret": true }
+  ],
   "createdAt": "2026-08-01T09:12:33Z",
   "updatedAt": "2026-08-27T14:18:00Z",
   "deletedAt": null
@@ -68,6 +72,13 @@ Additional authenticated data 不使用，三端一律留空。
 
 `kind` 目前只有 `apiKey` 與 `login` 兩個值。讀到不認識的值時保留原字串、
 以 `apiKey` 的樣子呈現，不得丟棄該筆——這條規則讓舊版客戶端不會吃掉新版資料。
+
+`fields` 是使用者自己加的欄位，預設空陣列。每個元素四個鍵：`id` 為 UUID、
+`name` 為使用者輸入的欄位名稱、`value` 為值、`isSecret` 決定畫面上遮不遮。
+缺少這個鍵時讀為空陣列。`isSecret` 為 `true` 的欄位不進搜尋索引的值，
+名稱一律可搜。
+
+欄位名稱不強制唯一。命令列以名稱取值時先比完全相同，再比包含，都大小寫不計。
 
 `url` 是申請這把金鑰的頁面，明文儲存，預設空字串。
 

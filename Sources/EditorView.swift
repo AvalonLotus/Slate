@@ -19,10 +19,6 @@ struct EditorView: View {
 
             ScrollContainer {
                 VStack(spacing: 14) {
-                    if isNew {
-                        kindPicker
-                    }
-
                     field(title: "名稱", systemImage: "tag.fill") {
                         TextField(draft.kind.namePlaceholder, text: $draft.name)
                             .textFieldStyle(.plain)
@@ -41,6 +37,8 @@ struct EditorView: View {
                     urlField
 
                     secretField
+
+                    customFields
 
                     if !isNew {
                         metadata
@@ -96,33 +94,6 @@ struct EditorView: View {
         .padding(.horizontal, Metrics.gutter)
         .padding(.top, 16)
         .padding(.bottom, 16)
-    }
-
-    private var kindPicker: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-            ForEach(ItemKind.allCases, id: \.self) { kind in
-                Button {
-                    withAnimation(Motion.pop) { draft.kind = kind }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: kind.symbol)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(kind.label)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(draft.kind == kind
-                                ? AnyShapeStyle(Palette.gradient(for: "accent"))
-                                : AnyShapeStyle(Color.primary.opacity(0.07)))
-                    )
-                    .foregroundStyle(draft.kind == kind ? .white : .secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
     }
 
     private var urlField: some View {
@@ -238,6 +209,82 @@ struct EditorView: View {
     private func save() {
         store.save(draft)
         onClose()
+    }
+
+    /// 固定那四欄裝不下的東西。名稱自己打，值要不要遮自己決定。
+    private var customFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "list.bullet.rectangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("其他欄位")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                Spacer()
+                Button {
+                    withAnimation(Motion.pop) { draft.fields.append(CustomField()) }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(GlassButtonStyle(size: 24))
+                .help("新增一欄")
+            }
+            .foregroundStyle(.secondary)
+
+            ForEach($draft.fields) { $entry in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        TextField("欄位名稱", text: $entry.name)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11, weight: .semibold))
+
+                        Button {
+                            withAnimation(Motion.pop) { $entry.isSecret.wrappedValue.toggle() }
+                        } label: {
+                            Image(systemName: entry.isSecret ? "eye.slash.fill" : "eye.fill")
+                        }
+                        .buttonStyle(GlassButtonStyle(size: 22))
+                        .help(entry.isSecret ? "值會遮起來" : "值直接顯示")
+
+                        Button {
+                            withAnimation(Motion.pop) {
+                                draft.fields.removeAll { $0.id == entry.id }
+                            }
+                        } label: {
+                            Image(systemName: "trash.fill")
+                        }
+                        .buttonStyle(GlassButtonStyle(size: 22))
+                        .help("刪掉這一欄")
+                    }
+                    .foregroundStyle(.secondary)
+
+                    Group {
+                        if entry.isSecret {
+                            SecureField("值", text: $entry.value)
+                        } else {
+                            TextField("值", text: $entry.value, axis: .vertical)
+                                .lineLimit(1...4)
+                        }
+                    }
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .cardBackground(radius: 12)
+                }
+            }
+
+            if draft.fields.isEmpty {
+                Text("有什麼就加什麼：環境、到期日、專案代號、備註。名稱自己打。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
     }
 
     private func field<Content: View>(

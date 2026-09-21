@@ -13,6 +13,8 @@ struct AgentRequest: Codable {
     var newName: String?
     var account: String?
     var url: String?
+    /// 自訂欄位的名稱。get 帶著它就讀那一欄，不帶就讀主要的值。
+    var field: String?
 }
 
 struct AgentResponse: Codable {
@@ -21,6 +23,7 @@ struct AgentResponse: Codable {
     var value: String?
     var username: String?
     var items: [Entry]?
+    var fields: [String]?
 
     struct Entry: Codable {
         var name: String
@@ -79,9 +82,20 @@ enum AgentProtocol {
                 )
             }
             return AgentResponse(ok: true, items: entries)
+        case "fields":
+            guard let name = request.name else { return .failure("missing name") }
+            guard let item = snapshot.find(name) else { return .failure("not found: \(name)") }
+            return AgentResponse(ok: true, fields: item.fields.map(\.displayName))
+
         case "get":
             guard let name = request.name else { return .failure("missing name") }
             guard let item = snapshot.find(name) else { return .failure("not found: \(name)") }
+            if let wanted = request.field {
+                guard let field = item.field(named: wanted) else {
+                    return .failure("\(name) 沒有這一欄：\(wanted)")
+                }
+                return AgentResponse(ok: true, value: field.value)
+            }
             return AgentResponse(ok: true, value: item.secret, username: item.username)
         case "delete":
             guard let name = request.name else { return .failure("missing name") }
@@ -90,7 +104,7 @@ enum AgentProtocol {
             return deleteHandler(item.displayName)
                 ? AgentResponse(ok: true, value: item.displayName)
                 : .failure("delete failed")
-        case "add", "set", "rename", "kind", "id", "url":
+        case "add", "set", "rename", "kind", "id", "url", "field":
             guard let mutateHandler else { return .failure("write unavailable") }
             return mutateHandler(request)
         case "import":

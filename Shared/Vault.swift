@@ -82,6 +82,16 @@ enum ItemKind: String, Codable, CaseIterable {
     }
 }
 
+/// 一筆自己加上去的欄位。名稱由你打，要不要遮起來也由你決定。
+struct CustomField: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var name: String = ""
+    var value: String = ""
+    var isSecret: Bool = false
+
+    var displayName: String { name.isEmpty ? "未命名欄位" : name }
+}
+
 struct KeyItem: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var kind: ItemKind = .apiKey
@@ -89,11 +99,20 @@ struct KeyItem: Identifiable, Codable, Equatable {
     var username: String = ""
     var secret: String = ""
     var url: String = ""
+    /// 固定那四欄裝不下的東西：有什麼就加什麼，名稱自己打。
+    var fields: [CustomField] = []
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     var deletedAt: Date?
 
     var isDeleted: Bool { deletedAt != nil }
+
+    /// 名稱對得上的那一欄，大小寫不計。
+    func field(named needle: String) -> CustomField? {
+        let target = needle.lowercased()
+        return fields.first { $0.name.lowercased() == target }
+            ?? fields.first { $0.name.lowercased().contains(target) }
+    }
 
     var displayName: String { name.isEmpty ? "未命名" : name }
 
@@ -134,6 +153,7 @@ struct KeyItem: Identifiable, Codable, Equatable {
         username: String = "",
         secret: String = "",
         url: String = "",
+        fields: [CustomField] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -144,6 +164,7 @@ struct KeyItem: Identifiable, Codable, Equatable {
         self.username = username
         self.secret = secret
         self.url = url
+        self.fields = fields
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -161,6 +182,8 @@ struct KeyItem: Identifiable, Codable, Equatable {
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         secret = try container.decodeIfPresent(String.self, forKey: .secret) ?? ""
         url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
+        // 這一欄是後來才有的，舊的保險庫沒有它。
+        fields = try container.decodeIfPresent([CustomField].self, forKey: .fields) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -203,6 +226,19 @@ final class VaultStore: ObservableObject {
     /// The file an import came from. It holds the whole vault behind nothing
     /// but the passphrase, so it is removed the moment the vault opens here.
     private var importedBundleURL: URL?
+    /// 換保險庫時記著畫面原本是亮的，開完再亮回去，中間不必再問一次人。
+    private var revealAfterOpen = false
+    /// 每次開保險庫的序號。換庫會把上一次開到一半的結果作廢，不然前一個庫的
+    /// 內容會裝進新庫，下一次存檔就寫進新庫的檔案裡。
+    private var openGeneration = 0
+    /// 開失敗了。socket 那頭靠它決定不要空等。
+    private(set) var openFailed = false
+    /// 這次執行已經確認過人是誰。驗一次就夠，收面板、換保險庫、再打開都不必再問。
+    /// 按上鎖鈕才會收回這件事。
+    private var personConfirmed = false
+    /// 已經替使用者換過一次保險庫了。金鑰對不上時兩個保險庫會互指，
+    /// 一路換下去沒有盡頭。
+    private var didFallBack = false
 
     init() {
         Paths.migrateLegacyDirectoryIfNeeded()
@@ -250,6 +286,11 @@ final class VaultStore: ObservableObject {
             $0.name.lowercased().contains(query)
                 || $0.username.lowercased().contains(query)
                 || $0.url.lowercased().contains(query)
+                // 欄位名稱一律可搜；值只有沒遮起來的才進來。
+                || $0.fields.contains { field in
+                    field.name.lowercased().contains(query)
+                        || (!field.isSecret && field.value.lowercased().contains(query))
+                }
         }
     }
 
@@ -266,13 +307,52 @@ final class VaultStore: ObservableObject {
         }
         phase = .unlocking
         message = nil
+        openFailed = false
+        openGeneration += 1
+        let generation = openGeneration
 
         Task.detached(priority: .userInitiated) {
             do {
-                let enclaveKey = try DeviceKey.current(reason: "解鎖你的保險庫")
+                let alreadyConfirmed = await MainActor.run { self.personConfirmed }
+                if !alreadyConfirmed {
+                    try PersonCheck.confirm(reason: "解鎖你的保險庫")
+                    await MainActor.run { self.personConfirmed = true }
+                }
+                let enclaveKey = try DeviceKey.current(reason: "開啟保險庫")
                 let (vaultKey, items) = try VaultFile.openOrCreate(enclaveKey: enclaveKey)
                 let events = VaultFile.loadEvents(key: vaultKey)
-                await MainActor.run { self.finishUnlock(key: vaultKey, items: items, events: events) }
+                await MainActor.run {
+                    self.finishUnlock(generation: generation, key: vaultKey, items: items, events: events)
+                }
+            } catch {
+                await MainActor.run { self.failUnlock(error) }
+            }
+        }
+    }
+
+    /// 開保險庫，不問任何人。
+    ///
+    /// 你的腳本與其他 App 要讀的東西，不該卡在有沒有人坐在這台 Mac 前面。
+    /// App 一啟動就走這裡，之後 socket 一直答得出來。畫面要不要跟著亮是
+    /// 另一回事，那是 `unlock()` 的事。
+    func openVault(revealWhenOpen: Bool = false) {
+        guard key == nil else {
+            if revealWhenOpen { withAnimation(Motion.snappy) { phase = .unlocked } }
+            return
+        }
+        revealAfterOpen = revealWhenOpen
+        openFailed = false
+        openGeneration += 1
+        let generation = openGeneration
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let enclaveKey = try DeviceKey.current(reason: "開啟保險庫")
+                let (vaultKey, items) = try VaultFile.openOrCreate(enclaveKey: enclaveKey)
+                let events = VaultFile.loadEvents(key: vaultKey)
+                await MainActor.run {
+                    self.finishOpen(generation: generation, key: vaultKey, items: items, events: events)
+                }
             } catch {
                 await MainActor.run { self.failUnlock(error) }
             }
@@ -289,7 +369,34 @@ final class VaultStore: ObservableObject {
         message = "已匯入，來源檔已刪除"
     }
 
-    private func finishUnlock(key: SymmetricKey, items: [KeyItem], events: [AuditEvent] = []) {
+    /// 保險庫開了，畫面不一定要跟著亮。
+    private func finishOpen(
+        generation: Int, key: SymmetricKey, items: [KeyItem], events: [AuditEvent]
+    ) {
+        guard generation == openGeneration else {
+            // 作廢的那次不能把畫面留在轉圈狀態。
+            if phase == .unlocking { phase = .locked }
+            return
+        }
+        didFallBack = false
+        self.key = key
+        self.items = items
+        self.events = events
+        refreshPassphraseScope()
+        discardImportSource()
+        guard revealAfterOpen else { return }
+        revealAfterOpen = false
+        withAnimation(Motion.snappy) { phase = .unlocked }
+    }
+
+    private func finishUnlock(
+        generation: Int, key: SymmetricKey, items: [KeyItem], events: [AuditEvent] = []
+    ) {
+        guard generation == openGeneration else {
+            if phase == .unlocking { phase = .locked }
+            return
+        }
+        didFallBack = false
         self.key = key
         self.items = items
         self.events = events
@@ -311,6 +418,7 @@ final class VaultStore: ObservableObject {
     }
 
     private func failUnlock(_ error: Error) {
+        openFailed = true
         // 已經開著的內容留著：驗證沒過是「這次沒證明你是誰」，不是「剛才那次不算」。
         // 真要收掉是 lockNow 的事。
         // deviceNotEnrolled 是「這個保險庫沒有這台的鑰匙」，不是「你是誰沒證明」。
@@ -320,7 +428,9 @@ final class VaultStore: ObservableObject {
             // 停在一個這台打不開的保險庫上沒有任何用處——桌面卡片與面板都會變成
             // 一則無法照做的訊息。有別的保險庫開得了就換過去，把打不開的那個
             // 降級成一句說明，而不是一道關卡。
-            if let fallback = Self.vaultsBoundToThisMac().first(where: { $0.id != currentVaultID }) {
+            if !didFallBack,
+               let fallback = Self.vaultsBoundToThisMac().first(where: { $0.id != currentVaultID }) {
+                didFallBack = true
                 switchVault(to: fallback.id)
                 message = "「\(stranded)」沒有這台 Mac 的鑰匙，已改開「\(fallback.name)」。"
                 return
@@ -337,13 +447,14 @@ final class VaultStore: ObservableObject {
     /// must never survive into the next one.
     func switchVault(to id: String) {
         guard id != currentVaultID else { return }
+        let wasOnScreen = phase == .unlocked
         discardOpenVault()
         search = ""
         VaultCatalogue.select(id)
         currentVaultID = id
         message = nil
         refreshPassphraseScope()
-        unlock()
+        openVault(revealWhenOpen: wasOnScreen)
     }
 
     @discardableResult
@@ -383,6 +494,8 @@ final class VaultStore: ObservableObject {
     /// 本身就代表「開著」——先 clear 再清 items，等於清完又被標記成開著，socket
     /// 那頭看到的會是一個空的、開著的保險庫：每一筆都回「找不到」，而不是「鎖著」。
     private func discardOpenVault() {
+        // 開到一半的那次結果作廢：它裝的是上一個保險庫。
+        openGeneration += 1
         key = nil
         items = []
         events = []
@@ -398,10 +511,13 @@ final class VaultStore: ObservableObject {
     func lock() {
         search = ""
         message = nil
+        // 收畫面的當下就取消「開完自動亮起來」，不然換庫撞上收畫面時，
+        // 面板會在沒有驗證的情況下自己亮回去。
+        revealAfterOpen = false
         phase = .locked
     }
 
-    /// 收畫面，並且把內容一起丟掉，但解鎖窗留著。iPhone 進背景走這裡：
+    /// 收畫面，並且把內容一起丟掉，但裝置金鑰留著。iPhone 進背景走這裡：
     /// 那邊沒有 socket，沒有誰會在背景讀，留著沒有意義。
     func lockForBackground() {
         discardOpenVault()
@@ -409,15 +525,21 @@ final class VaultStore: ObservableObject {
         message = nil
     }
 
-    /// 真的關上：上鎖鈕（⌘L）與換保險庫走這裡。解鎖窗一起收掉，
-    /// 所以下一次無論從哪裡開，都要再驗一次身分。
-    /// 睡眠與螢幕鎖定**不**走這裡——它們只收畫面並結束解鎖窗，
-    /// 記憶體裡已經開著的內容留著，socket 的呼叫端不會被螢幕事件切斷。
+    /// 上鎖鈕（⌘L）：收畫面，人要再看就得再驗一次。
+    ///
+    /// 內容留在記憶體裡，socket 那頭照樣讀得到。螢幕暗掉不代表要切斷正在跟
+    /// 保險庫對話的腳本。iPhone 沒有 socket，那邊整個收掉。
     func lockNow() {
+        #if canImport(AppKit)
+        // 這顆按鈕是唯一會把「已經確認過是誰」收回去的地方。
+        personConfirmed = false
+        lock()
+        #else
         DeviceKey.forget()
         discardOpenVault()
         search = ""
         message = nil
+        #endif
     }
 
     @discardableResult
@@ -825,6 +947,13 @@ enum VaultFile {
             }
             guard let vaultKey = opened else { throw VaultError.deviceNotEnrolled }
             return (vaultKey, try load(key: vaultKey))
+        }
+
+        // 信封讀不到，但 vault.dat 還在，而且不是直接用裝置金鑰加密的舊格式。
+        // 再往下走會產生一把新金鑰並把 vault.dat 整個蓋掉，內容就沒了。
+        if FileManager.default.fileExists(atPath: Paths.vault.path),
+           (try? load(key: enclaveKey)) == nil {
+            throw VaultError.corruptedVault
         }
 
         let legacyItems = (try? load(key: enclaveKey)) ?? []

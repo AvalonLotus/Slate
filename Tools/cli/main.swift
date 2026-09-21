@@ -8,8 +8,9 @@ import LocalAuthentication
 
 let usage = """
 用法：
-  slate get <名稱>     印出該筆的密碼或 API Key
+  slate get <名稱> [欄位]   印出該筆的密碼或 API Key；給了欄位就印那一欄
   slate user <名稱>    印出該筆的帳號
+  slate fields <名稱>  列出該筆自己加的欄位名稱
   slate list           列出所有條目名稱
   slate json           以 JSON 列出所有條目（不含密碼）
   slate check          逐一詢問各服務，該金鑰是否仍能通過驗證
@@ -20,6 +21,7 @@ let usage = """
   slate rename <舊名> <新名>  改名
   slate kind <名稱> <型別>    改型別
   slate id <名稱> <ID>        設定應用 / 頻道 ID
+  slate field <名稱> <欄位>   寫入自訂欄位，值從標準輸入讀，沒有就新增一欄
   slate url <名稱> <網址>     設定網址
   slate delete <名稱>         刪除該筆
   slate import <檔案>         匯入 csv 或 txt
@@ -28,10 +30,8 @@ let usage = """
 
 值一律從標準輸入讀，不放在指令參數裡，免得留在 shell 紀錄或行程清單。
 
-Slate 開著時一律向它取值：鎖著就請它解鎖一次，驗證面板會自己跑到最前面。
-之後的指令都不再詢問，也不必把 Slate 點到前景——直到你按上鎖、Mac 睡著、
-螢幕鎖上或 Slate 結束為止。
-Slate 沒開才會在這裡自行開啟保險庫，那是每執行一次就驗證一次。
+取值不需要驗證，也不必把 Slate 點到前景。Slate 開著就向它取值，
+沒開就在這裡自行開啟保險庫。驗證只在人要從面板上看內容時才會出現。
 """
 
 /// Secrets arrive on stdin so they never appear in `ps` or shell history.
@@ -124,13 +124,38 @@ switch command {
 case "get", "user":
     guard arguments.count > 1 else { fail("要給名稱") }
     let name = arguments[1]
-    if let response = askApp(AgentRequest(command: "get", name: name)), response.ok {
+    let wanted = command == "get" && arguments.count > 2 ? arguments[2] : nil
+    if let response = askApp(AgentRequest(command: "get", name: name, field: wanted)), response.ok {
         let value = command == "get" ? response.value : response.username
         print(value ?? "")
+    } else if let wanted {
+        let item = lookup(name)
+        guard let field = item.field(named: wanted) else { fail("\(name) 沒有這一欄：\(wanted)") }
+        print(field.value)
     } else {
         let item = lookup(name)
         print(command == "get" ? item.secret : item.username)
     }
+
+case "fields":
+    guard arguments.count > 1 else { fail("要給名稱") }
+    let name = arguments[1]
+    if let response = askApp(AgentRequest(command: "fields", name: name)),
+       response.ok, let names = response.fields {
+        for entry in names { print(entry) }
+    } else {
+        for entry in lookup(name).fields { print(entry.displayName) }
+    }
+
+case "field":
+    guard arguments.count > 2 else { fail("要給名稱和欄位") }
+    let value = readValue()
+    guard !value.isEmpty else { fail("值是空的，請用管線把值送進來") }
+    guard let response = askApp(AgentRequest(
+        command: "field", name: arguments[1], value: value, field: arguments[2]
+    )) else { fail("Slate 沒有在執行，寫入需要 App 開著") }
+    guard response.ok else { fail(response.error ?? "寫入失敗") }
+    print("已寫入：\(response.value ?? arguments[2])")
 
 case "list":
     if let response = askApp(AgentRequest(command: "list")), response.ok, let items = response.items {

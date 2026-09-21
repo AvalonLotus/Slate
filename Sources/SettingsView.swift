@@ -43,14 +43,8 @@ struct SettingsView: View {
     @EnvironmentObject private var store: VaultStore
     let onClose: () -> Void
 
-    @AppStorage("UnlockWindowMinutes") private var windowMinutes = UnlockWindow.choices[0]
-    @State private var passphrase = ""
-    @State private var passphraseRepeat = ""
-    @State private var revealPassphrase = false
     @StateObject private var updates = UpdateChecker()
     @StateObject private var login = LoginItem()
-    @State private var confirmingRemoval = false
-    @State private var passphraseExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,8 +52,6 @@ struct SettingsView: View {
 
             ScrollContainer {
                 VStack(spacing: 14) {
-                    passphraseSection
-                    unlockSection
                     startupSection
                     transferSection
                     updateSection
@@ -94,27 +86,6 @@ struct SettingsView: View {
         .padding(.horizontal, Metrics.gutter)
         .padding(.top, 16)
         .padding(.bottom, 16)
-    }
-
-    // MARK: - Unlock window
-
-    private var unlockSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("免驗證時間", systemImage: "touchid")
-
-            HStack(spacing: 8) {
-                ForEach(UnlockWindow.choices, id: \.self) { minutes in
-                    Button("\(minutes) 分鐘") { windowMinutes = minutes }
-                        .buttonStyle(CapsuleButtonStyle(filled: windowMinutes == minutes))
-                }
-            }
-        }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 12)
-        // Every section is one column: a short card must not shrink to its
-        // content while the talkative ones stretch.
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
     }
 
     // MARK: - Start at login
@@ -162,150 +133,6 @@ struct SettingsView: View {
         .onAppear { login.refresh() }
     }
 
-    // MARK: - Master passphrase
-
-    private var passphraseValid: Bool {
-        passphrase.count >= 8 && passphrase == passphraseRepeat
-    }
-
-    /// Nothing left to do here only when every vault carries the passphrase.
-    private var passphraseSettled: Bool {
-        store.hasPassphrase && store.vaultsMissingPassphrase.isEmpty
-    }
-
-    /// Typing a passphrase blind is how people mistype it, so the field can be
-    /// shown. One toggle drives both, since they have to match anyway.
-    private func passphraseField(
-        _ prompt: String,
-        text: Binding<String>,
-        showsToggle: Bool
-    ) -> some View {
-        HStack(spacing: 8) {
-            Group {
-                if revealPassphrase {
-                    TextField(prompt, text: text)
-                } else {
-                    SecureField(prompt, text: text)
-                }
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-
-            if showsToggle {
-                Button {
-                    revealPassphrase.toggle()
-                } label: {
-                    Image(systemName: revealPassphrase ? "eye.slash.fill" : "eye.fill")
-                }
-                .buttonStyle(GlassButtonStyle(size: 24))
-                .help(revealPassphrase ? "隱藏" : "顯示")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .cardBackground(radius: 12)
-    }
-
-    private var passphraseSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Once it is set there is nothing to do here day to day, so the
-            // section folds to its title and opens only when asked.
-            if passphraseSettled {
-                Button {
-                    withAnimation(Motion.snappy) { passphraseExpanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        sectionTitle("備份密碼", systemImage: "lock.rectangle.stack.fill")
-
-                        Text("已設定")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-
-                        Spacer(minLength: 0)
-
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(passphraseExpanded ? 0 : -90))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            } else {
-                sectionTitle("備份密碼", systemImage: "lock.rectangle.stack.fill")
-            }
-
-            if !passphraseSettled || passphraseExpanded {
-                Text("所有保險庫共用這一組，匯出與還原時使用。")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !store.hasPassphrase, store.passphraseExistsElsewhere {
-                    Text("其他保險庫已經有備份密碼，這裡輸入同一組就會全部對齊。")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.25))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if !store.vaultsMissingPassphrase.isEmpty, store.hasPassphrase {
-                    Text("「\(store.vaultsMissingPassphrase.joined(separator: "」「"))」還沒套用，重新輸入一次會一併補上。")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.25))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                passphraseField(
-                    store.hasPassphrase ? "輸入新的備份密碼可更換" : "備份密碼",
-                    text: $passphrase,
-                    showsToggle: true
-                )
-
-                passphraseField("再輸入一次", text: $passphraseRepeat, showsToggle: false)
-
-                HStack(spacing: 8) {
-                    Button(store.hasPassphrase ? "更換備份密碼" : "設定備份密碼") {
-                        withAnimation(Motion.snappy) {
-                            store.setPassphrase(passphrase)
-                            passphrase = ""
-                            passphraseRepeat = ""
-                            revealPassphrase = false
-                            passphraseExpanded = false
-                        }
-                    }
-                    .buttonStyle(CapsuleButtonStyle())
-                    .disabled(!passphraseValid)
-                    .opacity(passphraseValid ? 1 : 0.45)
-
-                    if store.hasPassphrase {
-                        Button(confirmingRemoval ? "確認移除？" : "移除") {
-                            if confirmingRemoval {
-                                withAnimation(Motion.snappy) {
-                                    store.removePassphrase()
-                                    confirmingRemoval = false
-                                }
-                            } else {
-                                confirmingRemoval = true
-                                Task {
-                                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                                    confirmingRemoval = false
-                                }
-                            }
-                        }
-                        .buttonStyle(CapsuleButtonStyle(
-                            tint: Color(red: 0.95, green: 0.33, blue: 0.33),
-                            filled: confirmingRemoval
-                        ))
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 12)
-        // Every section is one column: a short card must not shrink to its
-        // content while the talkative ones stretch.
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
-    }
-
     private var transferSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("轉移至其他裝置", systemImage: "arrow.left.arrow.right")
@@ -318,8 +145,6 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 Button("匯出保險庫") { exportVault() }
                     .buttonStyle(CapsuleButtonStyle())
-                    .disabled(!store.hasPassphrase)
-                    .opacity(store.hasPassphrase ? 1 : 0.45)
 
                 Button("匯入") { importVault() }
                     .buttonStyle(CapsuleButtonStyle(filled: false))

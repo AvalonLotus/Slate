@@ -75,17 +75,30 @@ enum EnclaveKey {
         #endif
     }
 
+    /// 蓋過格式標記就用 v2 的那組檔案，否則還是 v1。
+    static var keyURL: URL { EnclaveFormat.stored >= 2 ? Paths.enclaveKey2 : Paths.enclaveKey }
+    static var peerURL: URL {
+        EnclaveFormat.stored >= 2 ? Paths.peerPublicKey2 : Paths.peerPublicKey
+    }
+
     static var exists: Bool {
         Paths.migrateLegacyDirectoryIfNeeded()
         #if targetEnvironment(simulator)
         return FileManager.default.fileExists(atPath: Paths.simulatorKey.path)
         #else
-        return FileManager.default.fileExists(atPath: Paths.enclaveKey.path)
-            && FileManager.default.fileExists(atPath: Paths.peerPublicKey.path)
+        return FileManager.default.fileExists(atPath: keyURL.path)
+            && FileManager.default.fileExists(atPath: peerURL.path)
         #endif
     }
 
+    /// 第一次建庫：直接生在 v2 的檔名底下。
     static func provision() throws {
+        try provision(keyURL: Paths.enclaveKey2, peerURL: Paths.peerPublicKey2)
+        EnclaveFormat.stamp()
+    }
+
+    /// 寫到指定路徑。遷移用這個把新金鑰生在旁邊，舊的一個字都不動。
+    static func provision(keyURL: URL, peerURL: URL) throws {
         #if targetEnvironment(simulator)
         // The simulator has no Secure Enclave, so a plain random key stands in
         // and the rest of the app behaves identically. Compiled out on device.
@@ -99,23 +112,35 @@ enum EnclaveKey {
         guard let access = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            [.privateKeyUsage, .userPresence],
+            // 不帶 .userPresence：程式要讀的東西不該卡在有沒有人在場。
+            // 人要在畫面上看內容時才驗證，那道門在 PersonCheck。
+            [.privateKeyUsage],
             &error
         ) else { throw VaultError.accessControlFailed }
 
         let enclave = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: access)
         let peer = P256.KeyAgreement.PrivateKey()
         try Paths.ensureSupportDirectory()
-        try enclave.dataRepresentation.write(to: Paths.enclaveKey, options: .completeFileProtection)
-        try peer.publicKey.rawRepresentation.write(to: Paths.peerPublicKey, options: .completeFileProtection)
-        Paths.restrictToOwner(Paths.enclaveKey)
-        Paths.restrictToOwner(Paths.peerPublicKey)
+        try enclave.dataRepresentation.write(to: keyURL, options: .completeFileProtection)
+        try peer.publicKey.rawRepresentation.write(to: peerURL, options: .completeFileProtection)
+        Paths.restrictToOwner(keyURL)
+        Paths.restrictToOwner(peerURL)
         #endif
     }
 
     /// Blocks on the Touch ID sheet, so never call this from the main thread.
-    static func deriveKey(reason: String, reuseDuration: TimeInterval = 0) throws -> SymmetricKey {
-        guard exists else { throw VaultError.enclaveMissing }
+    static func deriveKey(
+        reason: String,
+        reuseDuration: TimeInterval = 0,
+        keyURL: URL? = nil,
+        peerURL: URL? = nil
+    ) throws -> SymmetricKey {
+        let keyURL = keyURL ?? EnclaveKey.keyURL
+        let peerURL = peerURL ?? EnclaveKey.peerURL
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: keyURL.path),
+              manager.fileExists(atPath: peerURL.path)
+        else { throw VaultError.enclaveMissing }
         let context = LAContext()
         context.localizedReason = reason
         context.localizedCancelTitle = "取消"
@@ -124,8 +149,8 @@ enum EnclaveKey {
         #if targetEnvironment(simulator)
         return SymmetricKey(data: try Data(contentsOf: Paths.simulatorKey))
         #else
-        let blob = try Data(contentsOf: Paths.enclaveKey)
-        let peerData = try Data(contentsOf: Paths.peerPublicKey)
+        let blob = try Data(contentsOf: keyURL)
+        let peerData = try Data(contentsOf: peerURL)
         do {
             let enclave = try SecureEnclave.P256.KeyAgreement.PrivateKey(
                 dataRepresentation: blob,
@@ -145,7 +170,7 @@ enum EnclaveKey {
         #endif
     }
 
-    private static func readableMessage(for error: Error) -> String {
+    static func readableMessage(for error: Error) -> String {
         let nsError = error as NSError
         if nsError.domain == LAError.errorDomain, let code = LAError.Code(rawValue: nsError.code) {
             switch code {
@@ -172,60 +197,180 @@ enum EnclaveKey {
     }
 }
 
-/// How long one Touch ID scan stays good for. Inside the window the app can
-/// open another company's vault, or reopen after locking, without asking again.
-enum UnlockWindow {
-    static let choices = [5, 10, 15]
-    private static let defaultsKey = "UnlockWindowMinutes"
+/// 安全區金鑰的格式。v1 的金鑰帶 `.userPresence`，每次使用都要有人在場，
+/// 連 App 自己開保險庫都要；v2 不帶，程式自己開得了，人只在要看內容時驗證。
+enum EnclaveFormat {
+    static let current = 2
 
-    static var minutes: Int {
-        let stored = UserDefaults.standard.integer(forKey: defaultsKey)
-        return choices.contains(stored) ? stored : choices[0]
+    private static var marker: URL {
+        Paths.supportDirectory.appendingPathComponent("enclave.format")
     }
 
-    static var seconds: TimeInterval { TimeInterval(minutes * 60) }
+    /// 沒有這個檔就是 v1：v2 是從寫下這個檔開始的。
+    static var stored: Int {
+        guard let text = try? String(contentsOf: marker, encoding: .utf8),
+              let value = Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        else { return 1 }
+        return value
+    }
+
+    static func stamp() {
+        try? FileManager.default.createDirectory(
+            at: Paths.supportDirectory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? "\(current)".write(to: marker, atomically: true, encoding: .utf8)
+    }
+
+    /// v1 的金鑰檔還在，而且還沒換過去。
+    static var needsMigration: Bool {
+        let manager = FileManager.default
+        return stored < current
+            && manager.fileExists(atPath: Paths.enclaveKey.path)
+            && manager.fileExists(atPath: Paths.peerPublicKey.path)
+    }
 }
 
-/// The device key, held in memory for the length of the unlock window. Without
-/// it every vault switch costs its own Touch ID, because each vault's envelope
-/// has to be unwrapped with the hardware key again.
+/// 把 v1 的保險庫換到 v2 的金鑰底下。
+enum EnclaveMigration {
+    /// 驗證一次，然後就不必再驗。會擋在驗證面板上，不要從主執行緒呼叫。
+    ///
+    /// 全程只增不減：新金鑰生在自己的檔名底下，每個信封「加」一份新的 wrap，
+    /// 舊金鑰與舊 wrap 一個字都不動。停在任何一點，這台都還是照 v1 開得了，
+    /// 下次啟動從頭再跑一次。最後一步才蓋格式標記，蓋下去才算換過去。
+    static func run() throws {
+        let manager = FileManager.default
+        let old = try EnclaveKey.deriveKey(
+            reason: "把保險庫改成不必每次驗證",
+            keyURL: Paths.enclaveKey,
+            peerURL: Paths.peerPublicKey
+        )
+
+        var opened: [(id: String, key: SymmetricKey)] = []
+        for descriptor in VaultCatalogue.all {
+            let envelopeURL = Paths.keyEnvelope(for: descriptor.id)
+            // 還沒開過的保險庫沒有信封，本來就沒東西要搬。
+            guard manager.fileExists(atPath: envelopeURL.path) else { continue }
+            // 檔案在卻讀不出來：停手。這種時候繼續走，等於在還沒確認能不能開的
+            // 情況下把這台改成只認新金鑰。
+            guard let envelope = VaultKeyStore.load(vaultID: descriptor.id) else {
+                throw VaultError.corruptedVault
+            }
+            guard envelope.wraps.contains(where: { $0.type == .device }) else { continue }
+
+            // 別台機器的 wrap 用這把開不了，開得了的那個就是這台的。
+            var found: SymmetricKey?
+            for wrap in envelope.wraps where wrap.type == .device {
+                if let key = try? VaultKeyStore.unwrap(wrap.blob, with: old) {
+                    found = key
+                    break
+                }
+            }
+            guard let found else {
+                throw VaultError.authenticationFailed(
+                    "「\(descriptor.name)」用現在的金鑰打不開，沒有動任何東西"
+                )
+            }
+            opened.append((descriptor.id, found))
+        }
+
+        try EnclaveKey.provision(keyURL: Paths.enclaveKey2, peerURL: Paths.peerPublicKey2)
+        let fresh = try EnclaveKey.deriveKey(
+            reason: "", keyURL: Paths.enclaveKey2, peerURL: Paths.peerPublicKey2
+        )
+
+        let label = "\(DeviceIdentity.id).v2"
+        for entry in opened {
+            guard var envelope = VaultKeyStore.load(vaultID: entry.id) else {
+                throw VaultError.corruptedVault
+            }
+            envelope.replace(KeyWrap(
+                type: .device,
+                id: label,
+                label: DeviceIdentity.label,
+                platform: DeviceIdentity.platform,
+                blob: try VaultKeyStore.wrap(entry.key, with: fresh)
+            ))
+            try VaultKeyStore.save(envelope, vaultID: entry.id)
+        }
+
+        // 蓋標記等於把這台切到 v2，切之前先確認每個保險庫都真的打得開。
+        for entry in opened {
+            guard let envelope = VaultKeyStore.load(vaultID: entry.id),
+                  let wrap = envelope.deviceWrap(id: label),
+                  (try? VaultKeyStore.unwrap(wrap.blob, with: fresh)) != nil
+            else { throw VaultError.corruptedVault }
+        }
+
+        // 快取裡還是剛才那把 v1 的。
+        DeviceKey.forget()
+        EnclaveFormat.stamp()
+    }
+}
+
+/// 人的那道門。只確認操作的是誰，不碰任何金鑰——保險庫早就開著了，
+/// 這裡擋的是畫面。
+enum PersonCheck {
+    /// 擋在驗證面板上，不要從主執行緒呼叫。
+    static func confirm(reason: String) throws {
+        let context = LAContext()
+        context.localizedCancelTitle = "取消"
+
+        var inspection: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &inspection) else {
+            throw VaultError.biometryUnavailable
+        }
+
+        let done = DispatchSemaphore(value: 0)
+        var failure: Error?
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, error in
+            if !ok { failure = error ?? VaultError.authenticationFailed("驗證未完成") }
+            done.signal()
+        }
+        done.wait()
+
+        if let failure {
+            throw VaultError.authenticationFailed(EnclaveKey.readableMessage(for: failure))
+        }
+    }
+}
+
+/// The device key, held for as long as this copy of the app is running.
+/// Without it every vault switch costs its own Touch ID, because each vault's
+/// envelope has to be unwrapped with the hardware key again.
 enum DeviceKey {
     private static let mutex = NSLock()
-    nonisolated(unsafe) private static var cached: (key: SymmetricKey, until: Date)?
+    nonisolated(unsafe) private static var cached: SymmetricKey?
 
-    /// Blocks on the Touch ID sheet whenever the window has run out, so never
-    /// call this from the main thread.
+    /// Blocks on the Touch ID sheet the first time it is asked, so never call
+    /// this from the main thread.
     static func current(reason: String) throws -> SymmetricKey {
-        if let key = unexpired() { return key }
+        if let key = held() { return key }
         if !EnclaveKey.exists { try EnclaveKey.provision() }
         let key = try EnclaveKey.deriveKey(reason: reason)
         mutex.lock()
-        cached = (key, Date().addingTimeInterval(UnlockWindow.seconds))
+        cached = key
         mutex.unlock()
         return key
     }
 
-    /// True while the window still holds the key, which is the same as saying
-    /// the next unlock costs no sheet. Lets the caller decide whether it has
-    /// to drag the app in front of the person first.
-    static var isWarm: Bool { unexpired() != nil }
+    /// True while the key is in hand, which is the same as saying the next
+    /// unlock costs no sheet. Lets the caller decide whether it has to drag
+    /// the app in front of the person first.
+    static var isWarm: Bool { held() != nil }
 
-    /// Closes the window early: the next unlock scans again.
+    /// Hands it back: the next unlock scans again. The lock button, sleep and
+    /// screen lock are the only things that do this.
     static func forget() {
         mutex.lock()
         cached = nil
         mutex.unlock()
     }
 
-    private static func unexpired() -> SymmetricKey? {
+    private static func held() -> SymmetricKey? {
         mutex.lock()
         defer { mutex.unlock() }
-        guard let entry = cached else { return nil }
-        guard entry.until > Date() else {
-            cached = nil
-            return nil
-        }
-        return entry.key
+        return cached
     }
 }
 
@@ -238,6 +383,10 @@ enum Paths {
     // The enclave key belongs to the device, not to any one vault: every
     // vault's envelope is wrapped with the same hardware key.
     static var enclaveKey: URL { supportDirectory.appendingPathComponent("enclave.key") }
+    /// v2 的安全區金鑰，另外兩個檔名。v1 的那兩個留在原地，換過去之後只是舊備份，
+    /// 遷移全程不寫、不搬、不刪它們——中途停在哪裡都還原得回去。
+    static var enclaveKey2: URL { supportDirectory.appendingPathComponent("enclave2.key") }
+    static var peerPublicKey2: URL { supportDirectory.appendingPathComponent("peer2.pub") }
     /// Simulator stand-in for the Secure Enclave key. Never written on device.
     static var simulatorKey: URL { supportDirectory.appendingPathComponent("simulator.key") }
     static var peerPublicKey: URL { supportDirectory.appendingPathComponent("peer.pub") }
