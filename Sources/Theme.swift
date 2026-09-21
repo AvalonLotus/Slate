@@ -266,7 +266,7 @@ struct ScrollContainer<Content: View>: View {
             }
         } else {
             ScrollView(.vertical) { content }
-                .scrollIndicators(.hidden)
+                .scrollIndicators(.never)
                 // AppKit adds its own content insets, which put the scrolling
                 // content out of line with headers sitting outside the scroll.
                 .contentMargins(.all, 0, for: .scrollContent)

@@ -269,7 +269,7 @@ final class VaultStore: ObservableObject {
 
         Task.detached(priority: .userInitiated) {
             do {
-                let enclaveKey = try DeviceKey.current(reason: "讀取你儲存的 API Key")
+                let enclaveKey = try DeviceKey.current(reason: "解鎖你的 Slate 保險庫")
                 let (vaultKey, items) = try VaultFile.openOrCreate(enclaveKey: enclaveKey)
                 let events = VaultFile.loadEvents(key: vaultKey)
                 await MainActor.run { self.finishUnlock(key: vaultKey, items: items, events: events) }
@@ -585,7 +585,7 @@ final class VaultStore: ObservableObject {
         let openVaultKey = key
         Task.detached(priority: .userInitiated) {
             do {
-                let enclaveKey = try DeviceKey.current(reason: "為所有保險庫設定備份密碼")
+                let enclaveKey = try DeviceKey.current(reason: "設定備份密碼")
                 var skipped: [String] = []
                 for vault in catalogue {
                     guard var envelope = VaultKeyStore.load(vaultID: vault.id) else { continue }
@@ -783,7 +783,7 @@ struct VaultBundle: Codable {
         }
 
         if let raw = vaultKey {
-            let enclaveKey = try DeviceKey.current(reason: "把這個保險庫綁到這台 Mac")
+            let enclaveKey = try DeviceKey.current(reason: "把保險庫綁到這台 Mac")
             let envelope = KeyEnvelope(
                 kdf: KDFParameters(rounds: VaultKeyStore.defaultRounds, salt: VaultKeyStore.randomSalt()),
                 wraps: [try VaultKeyStore.deviceWrap(

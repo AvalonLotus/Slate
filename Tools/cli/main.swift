@@ -98,7 +98,7 @@ func openLocally() -> [KeyItem] {
     guard EnclaveKey.exists else { fail("保險庫還沒建立，先開一次 Slate") }
     do {
         let enclaveKey = try EnclaveKey.deriveKey(
-            reason: "讓終端機讀取保險庫",
+            reason: "解鎖保險庫供終端機使用",
             reuseDuration: LATouchIDAuthenticationMaximumAllowableReuseDuration
         )
         let (_, items) = try VaultFile.openOrCreate(enclaveKey: enclaveKey)
