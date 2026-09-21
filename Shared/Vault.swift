@@ -269,7 +269,7 @@ final class VaultStore: ObservableObject {
 
         Task.detached(priority: .userInitiated) {
             do {
-                let enclaveKey = try DeviceKey.current(reason: "解鎖你的 Slate 保險庫")
+                let enclaveKey = try DeviceKey.current(reason: "解鎖你的保險庫")
                 let (vaultKey, items) = try VaultFile.openOrCreate(enclaveKey: enclaveKey)
                 let events = VaultFile.loadEvents(key: vaultKey)
                 await MainActor.run { self.finishUnlock(key: vaultKey, items: items, events: events) }
