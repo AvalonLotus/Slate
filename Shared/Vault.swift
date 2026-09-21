@@ -62,10 +62,6 @@ enum ItemKind: String, Codable, CaseIterable {
         }
     }
 
-    /// A token belongs to an app or a page, so it carries that id next to the
-    /// value. An API key has no such counterpart.
-    var showsAccountField: Bool { self == .login || self == .token }
-
     var accountLabel: String { self == .token ? "應用 / 頻道 ID" : "帳號" }
 
     var accountPlaceholder: String {

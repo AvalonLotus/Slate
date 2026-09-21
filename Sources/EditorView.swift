@@ -26,12 +26,12 @@ struct EditorView: View {
                             .focused($nameFocused)
                     }
 
-                    if draft.kind.showsAccountField {
-                        field(title: draft.kind.accountLabel, systemImage: "person.fill") {
-                            TextField(draft.kind.accountPlaceholder, text: $draft.username)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 13))
-                        }
+                    // 帳號跟值一樣通用，一律留著。標籤仍照型別走，既有的
+                    // 授權碼條目那一欄本來就裝應用 / 頻道 ID。
+                    field(title: draft.kind.accountLabel, systemImage: "person.fill") {
+                        TextField(draft.kind.accountPlaceholder, text: $draft.username)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
                     }
 
                     urlField
