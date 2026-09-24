@@ -1,21 +1,22 @@
 #!/bin/bash
 set -euo pipefail
 
-# Publishes a version: stamps Info.plist, builds the disk image, and stages it
-# on the website repo together with the manifest the app checks.
+# Builds a version: stamps Info.plist, builds the disk image, and puts it in a
+# local release folder together with the update manifest. Nothing is copied to
+# the website.
 #
 #   scripts/release.sh 1.1
 #
-# Nothing is committed or pushed — review the website repo, then push it.
+# Nothing is committed, pushed or published.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Where the download and the manifest are staged. Override for another site:
-#   SLATE_SITE=/path/to/site scripts/release.sh 1.1
-SITE="${SLATE_SITE:-$HOME/AvalonLotus.com}"
+# Where the disk image, the zip and the manifest are written. Override with:
+#   SLATE_SITE=/path/to/folder scripts/release.sh 1.1
+SITE="${SLATE_SITE:-$HOME/Library/Developer/Slate/release}"
 VERSION="${1:-}"
 
 [ -z "$VERSION" ] && { echo "用法：scripts/release.sh <版本>，例如 1.1"; exit 1; }
-[ -d "$SITE" ] || { echo "找不到網站 repo：$SITE"; exit 1; }
+mkdir -p "$SITE"
 
 PLIST="$ROOT/Resources/Info.plist"
 # The build number is stamped by build.sh at compile time.
@@ -45,8 +46,8 @@ cat > "$SITE/slate/latest.json" <<JSON
 JSON
 
 echo
-echo "已放進 $SITE/slate/："
+echo "已存到 $SITE/slate/（沒有放到官網）："
 ls -lh "$SITE/slate/" | tail -n +2
 echo
 echo "SHA-256  $SHA"
-echo "確認無誤後在網站 repo 提交並推送，App 端即可偵測到 $VERSION。"
+echo "這些檔案只在這台電腦上，要發布到哪裡由你決定。"
